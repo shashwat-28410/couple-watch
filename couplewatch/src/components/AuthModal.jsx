@@ -1,13 +1,17 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { supabase } from "../lib/supabaseClient";
 
-export default function AuthModal({ isOpen, onClose }) {
-  const [tab, setTab] = useState("login"); // login | signup
+export default function AuthModal({ isOpen, onClose, initialTab = "login" }) {
+  const [tab, setTab] = useState(initialTab); // login | signup
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState("");
+
+  // Sync tab with initialTab when modal opens
+  useEffect(() => {
+    if (isOpen) setTab(initialTab);
+  }, [isOpen, initialTab]);
 
   if (!isOpen) return null;
 
@@ -18,52 +22,21 @@ export default function AuthModal({ isOpen, onClose }) {
 
     try {
       if (tab === "signup") {
-        // ✅ Proper destructuring
-        const { data, error } = await supabase.auth.signUp({
-          email,
-          password,
-        });
-
+        const { data, error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
-
         const user = data?.user;
+        if (!user) throw new Error("User not returned");
 
-        if (!user) {
-          throw new Error("User was not returned after signup.");
-        }
-
-        // 🔥 Insert profile row
-        const { error: profileError } = await supabase
-          .from("profiles")
-          .insert([
-            {
-              id: user.id,
-              email: user.email,
-            },
-          ]);
-
-        if (profileError) {
-          throw profileError;
-        }
-
-        setMsg("✅ Account created successfully! You can now log in.");
+        await supabase.from("profiles").insert([{ id: user.id, email: user.email }]);
+        setMsg("✅ Account created! You can now log in.");
         setTab("login");
       } else {
-        const { error } = await supabase.auth.signInWithPassword({
-          email,
-          password,
-        });
-
+        const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-
         setMsg("✅ Logged in!");
-
-        setTimeout(() => {
-          onClose();
-        }, 500);
+        setTimeout(() => onClose(), 500);
       }
     } catch (err) {
-      console.error("Auth Error:", err);
       setMsg("❌ " + err.message);
     } finally {
       setLoading(false);
@@ -71,96 +44,46 @@ export default function AuthModal({ isOpen, onClose }) {
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center px-4">
-      {/* backdrop */}
-      <div
-        onClick={onClose}
-        className="absolute inset-0 bg-black/60 backdrop-blur-sm"
-      />
+    <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
+      <div onClick={onClose} className="absolute inset-0 bg-[#0D0D1A]/80 backdrop-blur-md" />
 
-      {/* modal */}
-      <div className="relative w-full max-w-md rounded-3xl border border-white/10 bg-white/10 p-6 shadow-2xl backdrop-blur-xl">
-        <button
-          onClick={onClose}
-          className="absolute right-4 top-4 text-white/70 hover:text-white"
-        >
-          ✕
-        </button>
+      <div className="relative w-full max-w-md romantic-card p-10 bg-[#0D0D1A]/60 shadow-2xl border-[#C84BE0]/20">
+        <button onClick={onClose} className="absolute right-6 top-6 text-white/30 hover:text-white transition">✕</button>
 
-        <h2 className="text-2xl font-bold text-white">
-          {tab === "login" ? "Welcome back 💜" : "Create your account ✨"}
+        <h2 className="text-3xl font-black mb-2 tracking-tight">
+          {tab === "login" ? "Welcome back ♡" : "Join the Romance ♡"}
         </h2>
-
-        <p className="mt-1 text-sm text-white/70">
-          {tab === "login"
-            ? "Log in to start watching together."
-            : "Sign up to create a private room."}
+        <p className="text-[#9090A8] text-sm mb-8 leading-relaxed">
+          {tab === "login" ? "Log in to sync with your favorite person." : "Create an account to start your journey."}
         </p>
 
-        {/* tabs */}
-        <div className="mt-6 grid grid-cols-2 rounded-2xl bg-black/20 p-1">
-          <button
-            type="button"
-            onClick={() => setTab("login")}
-            className={`rounded-2xl py-2 text-sm font-semibold transition ${
-              tab === "login"
-                ? "bg-white/20 text-white"
-                : "text-white/70 hover:text-white"
-            }`}
-          >
-            Login
-          </button>
-
-          <button
-            type="button"
-            onClick={() => setTab("signup")}
-            className={`rounded-2xl py-2 text-sm font-semibold transition ${
-              tab === "signup"
-                ? "bg-white/20 text-white"
-                : "text-white/70 hover:text-white"
-            }`}
-          >
-            Sign Up
-          </button>
+        <div className="grid grid-cols-2 bg-black/40 p-1 rounded-full mb-8 border border-white/5">
+          <button onClick={() => setTab("login")} className={`py-3 rounded-full text-xs font-black uppercase tracking-widest transition ${tab === "login" ? "bg-white/10 text-white" : "text-[#9090A8]"}`}>Login</button>
+          <button onClick={() => setTab("signup")} className={`py-3 rounded-full text-xs font-black uppercase tracking-widest transition ${tab === "signup" ? "bg-white/10 text-white" : "text-[#9090A8]"}`}>Sign Up</button>
         </div>
 
-        {/* form */}
-        <form onSubmit={handleAuth} className="mt-6 space-y-4">
+        <form onSubmit={handleAuth} className="space-y-6">
           <div>
-            <label className="text-sm text-white/80">Email</label>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-white outline-none placeholder:text-white/40 focus:border-pink-400/50"
+            <label className="text-[10px] font-black uppercase tracking-[0.2em] text-[#9090A8] mb-3 block">Email Address</label>
+            <input 
+              type="email" required value={email} onChange={e => setEmail(e.target.value)}
+              className="romantic-input w-full"
               placeholder="you@example.com"
             />
           </div>
-
           <div>
-            <label className="text-sm text-white/80">Password</label>
-            <input
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="mt-1 w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-white outline-none placeholder:text-white/40 focus:border-pink-400/50"
+            <label className="text-[10px] font-black uppercase tracking-[0.2em] text-[#9090A8] mb-3 block">Password</label>
+            <input 
+              type="password" required value={password} onChange={e => setPassword(e.target.value)}
+              className="romantic-input w-full"
               placeholder="••••••••"
             />
           </div>
 
-          {msg && <p className="text-sm text-white/80">{msg}</p>}
+          {msg && <p className={`text-xs font-bold text-center ${msg.includes("✅") ? "text-green-400" : "text-pink-500"}`}>{msg}</p>}
 
-          <button
-            disabled={loading}
-            className="w-full rounded-2xl bg-gradient-to-r from-purple-500 to-pink-500 py-3 font-semibold text-white shadow-lg shadow-purple-500/20 hover:opacity-95 disabled:opacity-60"
-          >
-            {loading
-              ? "Please wait..."
-              : tab === "login"
-              ? "Login"
-              : "Create Account"}
+          <button disabled={loading} className="w-full pill-button bg-primary-gradient justify-center py-4 text-sm tracking-widest shadow-xl shadow-purple-500/20 text-white">
+            {loading ? "PROCESSING..." : tab === "login" ? "CONTINUE ♡" : "CREATE ACCOUNT ♡"}
           </button>
         </form>
       </div>

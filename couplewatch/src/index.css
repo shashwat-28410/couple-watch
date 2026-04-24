@@ -1,3 +1,103 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  --primary-gradient: linear-gradient(135deg, #BE123C 0%, #881337 100%);
+}
+
+body {
+  margin: 0;
+  background-color: #0A0A0F;
+  color: white;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  overflow-x: hidden;
+}
+
+.text-primary-gradient {
+  background: var(--primary-gradient);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+.bg-primary-gradient {
+  background: var(--primary-gradient);
+}
+
+.romantic-card {
+  background: rgba(255, 255, 255, 0.02);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 24px;
+  padding: 32px;
+}
+
+.romantic-input {
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 9999px;
+  padding: 12px 24px;
+  color: white;
+  outline: none;
+  transition: all 0.3s ease;
+}
+
+.romantic-input:focus {
+  border-color: #BE123C;
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.pill-button {
+  border-radius: 9999px;
+  padding: 10px 32px;
+  font-weight: 700;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.3s ease;
+}
+
+.pill-button:hover {
+  transform: translateY(-1px);
+  opacity: 0.9;
+}
+
+.heart-particle {
+  position: absolute;
+  color: #BE123C;
+  opacity: 0.1;
+  pointer-events: none;
+  animation: float-heart linear infinite;
+}
+
+@keyframes float-heart {
+  0% { transform: translateY(100vh) rotate(0deg); opacity: 0; }
+  20% { opacity: 0.1; }
+  80% { opacity: 0.1; }
+  100% { transform: translateY(-20vh) rotate(360deg); opacity: 0; }
+}
+
+.custom-scrollbar::-webkit-scrollbar {
+  width: 4px;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(190, 18, 60, 0.2);
+  border-radius: 10px;
+}
+
+.max-width-container {
+  width: 100%;
+  max-width: 1200px;
+  margin-left: auto;
+  margin-right: auto;
+}

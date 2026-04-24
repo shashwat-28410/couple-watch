@@ -9,7 +9,6 @@ export default function ProtectedLayout() {
 
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [activeRoomCode, setActiveRoomCode] = useState(null);
   const [showAuth, setShowAuth] = useState(false);
   const [critError, setCritError] = useState(null);
 
@@ -35,37 +34,14 @@ export default function ProtectedLayout() {
     }
   }, []);
 
-  // 🧠 Check membership when session changes
+  // 🧠 Check session when it changes
   useEffect(() => {
-    const checkMembership = async () => {
+    const checkAuth = async () => {
       try {
         if (!session?.user) {
           setShowAuth(true);
-          return;
-        }
-
-        setShowAuth(false);
-
-        const { data, error } = await supabase
-          .from("room_members")
-          .select("rooms(room_code)")
-          .eq("user_id", session.user.id)
-          .single();
-
-        if (error && error.code !== "PGRST116") {
-          console.error("Membership error:", error);
-        }
-
-        const roomCode = data?.rooms?.room_code || null;
-        setActiveRoomCode(roomCode);
-
-        // 🔄 Redirect logic
-        if (roomCode && location.pathname === "/") {
-          navigate(`/room/${roomCode}`, { replace: true });
-        }
-
-        if (!roomCode && location.pathname.startsWith("/room")) {
-          navigate("/", { replace: true });
+        } else {
+          setShowAuth(false);
         }
       } catch (err) {
         console.error("Critical Layout Error:", err);
@@ -75,8 +51,8 @@ export default function ProtectedLayout() {
       }
     };
 
-    checkMembership();
-  }, [session, location.pathname]);
+    checkAuth();
+  }, [session]);
 
   if (critError) {
     return (
