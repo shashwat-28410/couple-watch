@@ -105,30 +105,18 @@ export default function Room() {
     
     try {
       setHasInteracted(true);
-      
-      // 1. Broadcast a request for live sync from the host
       if (channelRef.current && connectionStatus === "SUBSCRIBED") {
-        channelRef.current.send({
-          type: "broadcast",
-          event: "request-sync",
-          payload: {}
-        });
+        channelRef.current.send({ type: "broadcast", event: "request-sync", payload: {} });
       }
 
-      // 2. Fetch from DB as a fallback (in case host is offline)
       const { data, error } = await supabase.from("room_state").select("*").eq("room_id", room.id).single();
-      
       if (error) throw error;
-      
       if (data) {
         setRoomState(data);
         if (playerRef.current) {
           playerRef.current.currentTime = data.current_timestamp_seconds;
-          if (data.is_playing) {
-            playerRef.current.play().catch(() => {});
-          } else {
-            playerRef.current.pause();
-          }
+          if (data.is_playing) playerRef.current.play().catch(() => {});
+          else playerRef.current.pause();
         }
       }
     } catch (err) {
@@ -147,7 +135,20 @@ export default function Room() {
         if (roomError || !roomData) { navigate("/", { replace: true }); return; }
         setRoom(roomData);
 
-        // Parallelize initial data fetching for speed
+        // 1. Ensure user is a member (Join if missing after reload)
+        const { data: existingMember } = await supabase.from("room_members")
+          .select("*")
+          .eq("room_id", roomData.id)
+          .eq("user_id", authUser.id)
+          .maybeSingle();
+
+        if (!existingMember) {
+          await supabase.from("room_members").insert([
+            { room_id: roomData.id, user_id: authUser.id, role: roomData.created_by === authUser.id ? "host" : "member" }
+          ]);
+        }
+
+        // 2. Parallelize data fetching
         const [stateRes, membersRes, messagesRes] = await Promise.all([
           supabase.from("room_state").select("*").eq("room_id", roomData.id).maybeSingle(),
           supabase.from("room_members").select("id, role, user_id, profiles(email)").eq("room_id", roomData.id),
@@ -155,14 +156,12 @@ export default function Room() {
         ]);
 
         if (stateRes.data) setRoomState(stateRes.data);
-        
         if (membersRes.data) {
           setMembers(membersRes.data);
           const current = membersRes.data.find(m => m.user_id === authUser.id);
           if (current) setIsHost(current.role === "host");
           else if (roomData.created_by === authUser.id) setIsHost(true);
         }
-
         if (messagesRes.data) setMessages(messagesRes.data);
       } catch (err) { 
         console.error("Init Error:", err);
@@ -180,10 +179,7 @@ export default function Room() {
     let reconnectTimeout;
     
     const setupChannel = async () => {
-      // Clean up existing channel if any
-      if (subChannel) {
-        await supabase.removeChannel(subChannel);
-      }
+      if (subChannel) await supabase.removeChannel(subChannel);
 
       subChannel = supabase.channel(`room_${room.id}`, { 
         config: { 
@@ -199,24 +195,32 @@ export default function Room() {
           setRoomState(prev => ({ ...prev, ...p.new }));
         })
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `room_id=eq.${room.id}` }, async (payload) => {
-          // Check if we already have this message from broadcast
           setMessages(current => {
             if (current.some(m => m.id === payload.new.id)) return current;
-            
-            // If not, we need to fetch the email since Postgres payload only has user_id
-            supabase.from("profiles").select("email").eq("id", payload.new.user_id).single()
-              .then(({ data }) => {
-                setMessages(c => c.map(m => m.id === payload.new.id ? { ...m, profiles: data } : m));
-              });
-              
-            return [...current, { ...payload.new, profiles: { email: "..." } }];
+            return [...current, { ...payload.new, profiles: { email: "Partner" } }];
           });
+          
+          supabase.from("profiles").select("email").eq("id", payload.new.user_id).single()
+            .then(({ data }) => {
+              if (data) {
+                setMessages(c => c.map(m => m.id === payload.new.id ? { ...m, profiles: data } : m));
+              }
+            });
         })
         .on("broadcast", { event: "chat-msg" }, ({ payload }) => {
           setMessages(current => current.some(x => x.id === payload.id) ? current : [...current, payload]);
         })
         .on("broadcast", { event: "sync-event" }, ({ payload }) => {
           setRoomState(payload);
+        })
+        .on("broadcast", { event: "request-sync" }, () => {
+          if (isHostRef.current && playerRef.current && channelRef.current) {
+            channelRef.current.send({ 
+              type: "broadcast", 
+              event: "sync-event", 
+              payload: { ...roomStateRef.current, current_timestamp_seconds: playerRef.current.currentTime } 
+            });
+          }
         })
         .on("presence", { event: "sync" }, () => {
           const state = subChannel.presenceState();
@@ -234,18 +238,10 @@ export default function Room() {
         })
         .subscribe(async (status) => {
           setConnectionStatus(status);
-          
           if (status === "SUBSCRIBED") {
-            // Immediately track presence so we appear online
-            await subChannel.track({ 
-              online_at: new Date().toISOString(), 
-              is_typing: false, 
-              email: user.email 
-            });
+            await subChannel.track({ online_at: new Date().toISOString(), is_typing: false, email: user.email });
           }
-          
           if (status === "TIMED_OUT" || status === "CLOSED" || status === "CHANNEL_ERROR") {
-            console.log(`Realtime ${status}, retrying in 2s...`);
             if (reconnectTimeout) clearTimeout(reconnectTimeout);
             reconnectTimeout = setTimeout(setupChannel, 2000);
           }
@@ -254,19 +250,9 @@ export default function Room() {
 
     const handleVisibilityChange = async () => {
       if (document.visibilityState === "visible") {
-        console.log("Tab visible, checking connection...");
-        
-        // Refresh room state from DB to ensure sync after being backgrounded
-        const { data: stateData } = await supabase
-          .from("room_state")
-          .select("*")
-          .eq("room_id", room.id)
-          .single();
-          
+        const { data: stateData } = await supabase.from("room_state").select("*").eq("room_id", room.id).single();
         if (stateData) {
           setRoomState(stateData);
-          
-          // If I am the host, immediately broadcast my current time to sync others
           if (isHostRef.current && playerRef.current && channelRef.current) {
             channelRef.current.send({ 
               type: "broadcast", 
@@ -275,19 +261,8 @@ export default function Room() {
             });
           }
         }
-
-        // Check if channel is healthy
-        if (!subChannel || subChannel.state !== "joined") {
-          console.log("Channel not joined, re-establishing...");
-          setupChannel();
-        } else {
-          // Even if joined, re-track presence to be sure
-          subChannel.track({ 
-            online_at: new Date().toISOString(), 
-            is_typing: false, 
-            email: user.email 
-          });
-        }
+        if (!subChannel || subChannel.state !== "joined") setupChannel();
+        else subChannel.track({ online_at: new Date().toISOString(), is_typing: false, email: user.email });
       }
     };
 
