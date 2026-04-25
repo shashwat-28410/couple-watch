@@ -32,6 +32,13 @@ export default function Room() {
   const isTypingRef = useRef(false);
   const typingTimeoutRef = useRef(null);
 
+  // New UI states for Netflix-style controls
+  const [showControls, setShowControls] = useState(false);
+  const controlsTimeoutRef = useRef(null);
+  const [seekFeedback, setSeekFeedback] = useState(null);
+  const seekFeedbackTimeoutRef = useRef(null);
+  const lastClickTimeRef = useRef(0);
+
   useEffect(() => { roomStateRef.current = roomState; }, [roomState]);
   useEffect(() => { isHostRef.current = isHost; }, [isHost]);
   useEffect(() => { hasInteractedRef.current = hasInteracted; }, [hasInteracted]);
@@ -135,7 +142,6 @@ export default function Room() {
         if (roomError || !roomData) { navigate("/", { replace: true }); return; }
         setRoom(roomData);
 
-        // 1. Ensure user is a member (Join if missing after reload)
         const { data: existingMember } = await supabase.from("room_members")
           .select("*")
           .eq("room_id", roomData.id)
@@ -148,7 +154,6 @@ export default function Room() {
           ]);
         }
 
-        // 2. Parallelize data fetching
         const [stateRes, membersRes, messagesRes] = await Promise.all([
           supabase.from("room_state").select("*").eq("room_id", roomData.id).maybeSingle(),
           supabase.from("room_members").select("id, role, user_id, profiles(email)").eq("room_id", roomData.id),
@@ -293,13 +298,57 @@ export default function Room() {
 
   async function updateRoomState(newValues) {
     if (!isHost || !room) return;
-    const compensatedValues = { ...roomStateRef.current, ...newValues };
-    setRoomState(compensatedValues);
-    if (channelRef.current && connectionStatus === "SUBSCRIBED") {
-      channelRef.current.send({ type: "broadcast", event: "sync-event", payload: compensatedValues });
-    }
+    
+    setRoomState(prev => {
+      const compensatedValues = { ...prev, ...newValues };
+      if (channelRef.current && connectionStatus === "SUBSCRIBED") {
+        channelRef.current.send({ 
+          type: "broadcast", 
+          event: "sync-event", 
+          payload: compensatedValues 
+        });
+      }
+      return compensatedValues;
+    });
+
     await supabase.from("room_state").update(newValues).eq("room_id", room.id);
   }
+
+  const toggleControls = () => {
+    setShowControls(true);
+    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+    controlsTimeoutRef.current = setTimeout(() => {
+      setShowControls(false);
+    }, 3000);
+  };
+
+  const handleVideoClick = (e) => {
+    if (e.target.closest('button')) return;
+    const now = Date.now();
+    const isDoubleTap = now - lastClickTimeRef.current < 300;
+    lastClickTimeRef.current = now;
+
+    if (isDoubleTap) {
+      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+      setShowControls(false);
+      const rect = e.currentTarget.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      if (playerRef.current) {
+        const newTime = x < rect.width / 2 
+          ? Math.max(0, playerRef.current.currentTime - 5)
+          : Math.min(playerRef.current.duration || Infinity, playerRef.current.currentTime + 5);
+        
+        playerRef.current.currentTime = newTime;
+        if (isHost) updateRoomState({ current_timestamp_seconds: newTime });
+        setSeekFeedback(x < rect.width / 2 ? "backward" : "forward");
+        
+        if (seekFeedbackTimeoutRef.current) clearTimeout(seekFeedbackTimeoutRef.current);
+        seekFeedbackTimeoutRef.current = setTimeout(() => setSeekFeedback(null), 800);
+      }
+    } else {
+      toggleControls();
+    }
+  };
 
   async function handleSetVideoUrl() {
     const url = formatVideoUrl(videoUrlInput);
@@ -351,7 +400,10 @@ export default function Room() {
           <div className="flex flex-col lg:flex-row gap-10 items-start">
             <div className="flex-1 w-full space-y-10">
               <div className="romantic-card !p-0 border-white/5 bg-white/[0.02] overflow-hidden shadow-2xl relative">
-                <div className="relative aspect-video bg-black group">
+                <div 
+                  className="relative aspect-video bg-black group cursor-pointer"
+                  onClick={handleVideoClick}
+                >
                   {roomState?.video_url ? (
                     <video 
                       key={roomState.video_url}
@@ -369,6 +421,76 @@ export default function Room() {
                       onError={() => { setVideoError("Playback failed. Ensure it's a direct MP4 URL."); setVideoLoading(false); }}
                     />
                   ) : ( <div className="w-full h-full bg-black flex items-center justify-center"><div className="text-center space-y-4 opacity-20"><span className="text-6xl">🎬</span><p className="text-[#8B8B9A] text-[11px] font-black uppercase tracking-[0.4em]">Ready for action</p></div></div> )}
+
+                  {/* Seek Feedback Overlays */}
+                  {seekFeedback === "backward" && (
+                    <div className="absolute inset-y-0 left-0 w-1/2 z-50 flex items-center justify-center pointer-events-none">
+                      <div className="w-24 h-24 rounded-full bg-white/10 border border-white/10 backdrop-blur-md flex flex-col items-center justify-center animate-pulse">
+                        <svg className="w-8 h-8 text-white/60" fill="currentColor" viewBox="0 0 24 24"><path d="M11 18V6l-8.5 6 8.5 6zm.5-6l8.5 6V6l-8.5 6z"/></svg>
+                        <span className="text-white/60 text-[10px] font-black tracking-widest mt-1">5S</span>
+                      </div>
+                    </div>
+                  )}
+                  {seekFeedback === "forward" && (
+                    <div className="absolute inset-y-0 right-0 w-1/2 z-50 flex items-center justify-center pointer-events-none">
+                      <div className="w-24 h-24 rounded-full bg-white/10 border border-white/10 backdrop-blur-md flex flex-col items-center justify-center animate-pulse">
+                        <svg className="w-8 h-8 text-white/60" fill="currentColor" viewBox="0 0 24 24"><path d="M4 18l8.5-6L4 6v12zm9-12v12l8.5-6L13 6z"/></svg>
+                        <span className="text-white/60 text-[10px] font-black tracking-widest mt-1">5S</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Netflix-style Transparent Controls */}
+                  {isHost && hasInteracted && roomState?.video_url && showControls && (
+                    <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40 transition-opacity">
+                      <div className="flex items-center gap-12 md:gap-20">
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (playerRef.current) {
+                              playerRef.current.currentTime = Math.max(0, playerRef.current.currentTime - 5);
+                              updateRoomState({ current_timestamp_seconds: playerRef.current.currentTime });
+                            }
+                          }}
+                          className="w-16 h-16 rounded-full border-2 border-white/20 flex flex-col items-center justify-center text-white/90 hover:bg-white/10 hover:border-white/40 transition-all active:scale-90"
+                        >
+                          <span className="text-sm font-black">-5s</span>
+                        </button>
+
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (roomState.is_playing) {
+                              updateRoomState({ is_playing: false, current_timestamp_seconds: playerRef.current?.currentTime || 0 });
+                            } else {
+                              const isAtEnd = playerRef.current?.currentTime === playerRef.current?.duration;
+                              updateRoomState({ is_playing: true, current_timestamp_seconds: isAtEnd ? 0 : (playerRef.current?.currentTime || 0) });
+                            }
+                          }}
+                          className="w-24 h-24 rounded-full border-2 border-white/30 flex items-center justify-center text-white/90 hover:bg-white/10 hover:border-white/50 transition-all active:scale-90"
+                        >
+                          {roomState.is_playing ? (
+                            <svg className="w-12 h-12" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
+                          ) : (
+                            <svg className="w-12 h-12 ml-2" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
+                          )}
+                        </button>
+
+                        <button 
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (playerRef.current) {
+                              playerRef.current.currentTime = Math.min(playerRef.current.duration, playerRef.current.currentTime + 5);
+                              updateRoomState({ current_timestamp_seconds: playerRef.current.currentTime });
+                            }
+                          }}
+                          className="w-16 h-16 rounded-full border-2 border-white/20 flex flex-col items-center justify-center text-white/90 hover:bg-white/10 hover:border-white/40 transition-all active:scale-90"
+                        >
+                          <span className="text-sm font-black">+5s</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {videoLoading && !videoError && (
                     <div className="absolute inset-0 bg-black/60 backdrop-blur-[4px] flex flex-col items-center justify-center z-10"><div className="w-14 h-14 border-4 border-rose-500/20 border-t-rose-500 rounded-full animate-spin mb-4"></div><p className="text-[10px] font-black uppercase tracking-[0.3em] text-rose-500">Buffering...</p></div>
@@ -395,24 +517,8 @@ export default function Room() {
                         <input type="text" value={videoUrlInput} onChange={(e) => setVideoUrlInput(e.target.value)} placeholder="PASTE DIRECT MP4 LINK..." className="romantic-input flex-1 text-center font-bold tracking-[0.1em] placeholder:text-[#33334A] focus:scale-[1.01]" />
                         <button onClick={handleSetVideoUrl} className="pill-button bg-primary-gradient px-12 text-white shadow-[0_10px_20px_rgba(190,18,60,0.2)] active:scale-95 transition-all">SET VIDEO</button>
                       </div>
-                      {roomState?.video_url && (
-                        <div className="flex justify-center gap-10">
-                          <button 
-                            onClick={() => {
-                              const isAtEnd = playerRef.current?.currentTime === playerRef.current?.duration;
-                              updateRoomState({ is_playing: true, current_timestamp_seconds: isAtEnd ? 0 : (playerRef.current?.currentTime || 0) });
-                            }} 
-                            className="w-20 h-20 rounded-full bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-500 hover:bg-rose-500/20 hover:scale-110 active:scale-90 transition-all shadow-[0_0_20px_rgba(244,63,94,0.1)]"
-                          >
-                            <svg className="w-10 h-10" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>
-                          </button>
-                          <button 
-                            onClick={() => updateRoomState({ is_playing: false, current_timestamp_seconds: playerRef.current?.currentTime || 0 })} 
-                            className="w-20 h-20 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white hover:bg-white/10 hover:scale-110 active:scale-90 transition-all shadow-[0_0_20px_rgba(255,255,255,0.05)]"
-                          >
-                            <svg className="w-10 h-10" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg>
-                          </button>
-                        </div>
+                      {!showControls && roomState?.video_url && (
+                        <p className="text-center text-[10px] text-[#55556A] font-black uppercase tracking-[0.3em] animate-pulse">Tap video for controls</p>
                       )}
                     </div>
                   ) : (

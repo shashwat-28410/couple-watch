@@ -34,7 +34,10 @@ export default function AuthModal({ isOpen, onClose, initialTab = "login" }) {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
         setMsg("✅ Logged in!");
-        setTimeout(() => onClose(), 500);
+        setTimeout(() => {
+          onClose();
+          window.location.reload();
+        }, 500);
       }
     } catch (err) {
       setMsg("❌ " + err.message);
