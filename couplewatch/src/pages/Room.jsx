@@ -70,143 +70,169 @@ useEffect(() => {
 }, [remoteStream, callStatus]);
 
 // WebRTC Logic
-  const createPeerConnection = () => {
-    const pc = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
-    });
-    pc.onicecandidate = (event) => {
-      if (event.candidate && channelRef.current) {
-        channelRef.current.send({
-          type: "broadcast",
-          event: "webrtc-signal",
-          payload: { type: "candidate", candidate: event.candidate, senderId: user.id }
-        });
-      }
-    };
-    pc.ontrack = (event) => {
-      setRemoteStream(event.streams[0]);
-      if (callType === 'video' || event.streams[0].getVideoTracks().length > 0) {
-        if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
-      } else {
-        if (remoteAudioRef.current) remoteAudioRef.current.srcObject = event.streams[0];
-      }
-      setCallStatus("CONNECTED");
-    };
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
-        endCall();
-      }
-    };
-    peerConnectionRef.current = pc;
-    return pc;
+const createPeerConnection = () => {
+  console.log("Creating Peer Connection...");
+  const pc = new RTCPeerConnection({
+    iceServers: [
+      { urls: "stun:stun.l.google.com:19302" },
+      { urls: "stun:stun1.l.google.com:19302" },
+      { urls: "stun:stun2.l.google.com:19302" },
+      { urls: "stun:stun3.l.google.com:19302" },
+      { urls: "stun:stun4.l.google.com:19302" },
+    ]
+  });
+
+  pc.onicecandidate = (event) => {
+    if (event.candidate && channelRef.current) {
+      console.log("Sending ICE candidate...");
+      channelRef.current.send({
+        type: "broadcast",
+        event: "webrtc-signal",
+        payload: { type: "candidate", candidate: event.candidate, senderId: user.id }
+      });
+    }
   };
 
-  const startCall = async (type) => {
+  pc.ontrack = (event) => {
+    console.log("Received remote track:", event.track.kind);
+    const stream = event.streams[0];
+    setRemoteStream(stream);
+
+    // Immediate assignment for robustness
+    if (event.track.kind === 'video' && remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = stream;
+    } else if (event.track.kind === 'audio' && remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = stream;
+    }
+    setCallStatus("CONNECTED");
+  };
+
+  pc.onconnectionstatechange = () => {
+    console.log("Connection State Change:", pc.connectionState);
+    if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+      console.warn("Connection failed or disconnected.");
+      endCall();
+    }
+  };
+
+  peerConnectionRef.current = pc;
+  return pc;
+};
+
+const startCall = async (type) => {
+  if (!channelRef.current || connectionStatus !== "SUBSCRIBED") {
+    alert("Wait for room connection before calling.");
+    return;
+  }
+
+  try {
+    console.log(`Starting ${type} call...`);
+    const constraints = { 
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, 
+      video: type === 'video' 
+    };
+
+    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    setLocalStream(stream);
+    setCallType(type);
+    setCallStatus("CONNECTING");
+    if (type === 'video') setIsVideoEnabled(true);
+
+    const pc = createPeerConnection();
+    stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+
+    console.log("Sending offer...");
+    channelRef.current.send({
+      type: "broadcast",
+      event: "webrtc-signal",
+      payload: { type: "offer", sdp: offer, senderId: user.id, callType: type }
+    });
+  } catch (err) {
+    console.error("Call error (Media Devices):", err);
+    alert("Could not access camera/mic. Ensure you are on HTTPS and granted permissions.");
+    setCallStatus("IDLE");
+  }
+};
+
+const endCall = (sendSignal = true) => {
+  console.log("Ending call...");
+  if (sendSignal && channelRef.current) {
+    channelRef.current.send({
+      type: "broadcast",
+      event: "webrtc-signal",
+      payload: { type: "hangup", senderId: user.id }
+    });
+  }
+  if (localStream) {
+    localStream.getTracks().forEach(track => track.stop());
+    setLocalStream(null);
+  }
+  if (peerConnectionRef.current) {
+    peerConnectionRef.current.close();
+    peerConnectionRef.current = null;
+  }
+  setRemoteStream(null);
+  setCallStatus("IDLE");
+  setCallType(null);
+  setIsAudioMuted(false);
+  setIsVideoEnabled(false);
+};
+
+const handleWebRTCSignal = async (payload) => {
+  const { type, sdp, candidate, senderId, callType: incomingType } = payload;
+  if (senderId === user.id) return;
+
+  console.log(`Received WebRTC Signal: ${type} from ${senderId}`);
+
+  if (type === "offer") {
     try {
       const constraints = { 
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, 
-        video: type === 'video' 
+        video: incomingType === 'video' 
       };
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       setLocalStream(stream);
-      setCallType(type);
+      setCallType(incomingType);
       setCallStatus("CONNECTING");
-      if (type === 'video') setIsVideoEnabled(true);
+      if (incomingType === 'video') setIsVideoEnabled(true);
+
       const pc = createPeerConnection();
       stream.getTracks().forEach(track => pc.addTrack(track, stream));
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
+
+      await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      console.log("Sending answer...");
       channelRef.current.send({
         type: "broadcast",
         event: "webrtc-signal",
-        payload: { type: "offer", sdp: offer, senderId: user.id, callType: type }
+        payload: { type: "answer", sdp: answer, senderId: user.id }
       });
     } catch (err) {
-      console.error("Call error:", err);
-      setCallStatus("IDLE");
+      console.error("Error responding to offer:", err);
     }
-  };
-
-  const endCall = (sendSignal = true) => {
-    if (sendSignal && channelRef.current) {
-      channelRef.current.send({
-        type: "broadcast",
-        event: "webrtc-signal",
-        payload: { type: "hangup", senderId: user.id }
-      });
-    }
-    if (localStream) {
-      localStream.getTracks().forEach(track => track.stop());
-      setLocalStream(null);
-    }
+  } else if (type === "answer") {
     if (peerConnectionRef.current) {
-      peerConnectionRef.current.close();
-      peerConnectionRef.current = null;
+      console.log("Setting remote description (Answer)...");
+      await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(sdp));
     }
-    setRemoteStream(null);
-    setCallStatus("IDLE");
-    setCallType(null);
-    setIsAudioMuted(false);
-    setIsVideoEnabled(false);
-  };
-
-  const toggleMute = () => {
-    if (localStream) {
-      const audioTrack = localStream.getAudioTracks()[0];
-      if (audioTrack) {
-        audioTrack.enabled = !audioTrack.enabled;
-        setIsAudioMuted(!audioTrack.enabled);
-      }
-    }
-  };
-
-  const toggleVideo = () => {
-    if (localStream) {
-      const videoTrack = localStream.getVideoTracks()[0];
-      if (videoTrack) {
-        videoTrack.enabled = !videoTrack.enabled;
-        setIsVideoEnabled(videoTrack.enabled);
-      }
-    }
-  };
-
-  const handleWebRTCSignal = async (payload) => {
-    const { type, sdp, candidate, senderId, callType: incomingType } = payload;
-    if (senderId === user.id) return;
-    if (type === "offer") {
+  } else if (type === "candidate") {
+    if (peerConnectionRef.current) {
       try {
-        const constraints = { 
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, 
-          video: incomingType === 'video' 
-        };
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        setLocalStream(stream);
-        setCallType(incomingType);
-        setCallStatus("CONNECTING");
-        if (incomingType === 'video') setIsVideoEnabled(true);
-        const pc = createPeerConnection();
-        stream.getTracks().forEach(track => pc.addTrack(track, stream));
-        await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        channelRef.current.send({
-          type: "broadcast",
-          event: "webrtc-signal",
-          payload: { type: "answer", sdp: answer, senderId: user.id }
-        });
-      } catch (err) { console.error("Answer error:", err); }
-    } else if (type === "answer") {
-      if (peerConnectionRef.current) await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(sdp));
-    } else if (type === "candidate") {
-      if (peerConnectionRef.current) {
-        try { await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate)); } 
-        catch (e) { console.error("Error adding candidate", e); }
+        console.log("Adding ICE candidate...");
+        await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (e) {
+        console.error("Error adding candidate:", e);
       }
-    } else if (type === "hangup") {
-      endCall(false);
     }
-  };
-
+  } else if (type === "hangup") {
+    endCall(false);
+  }
+};
   useEffect(() => {
     if (playerRef.current && hasInteracted && roomState) {
       if (roomState.is_playing && playerRef.current.paused) playerRef.current.play().catch(() => {});
