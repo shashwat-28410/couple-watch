@@ -329,6 +329,22 @@ export default function Room() {
     return () => { if (reconnectTimeout) clearTimeout(reconnectTimeout); if (subChannel) supabase.removeChannel(subChannel); };
   }, [room?.id, user?.id]);
 
+  const handleSetVideoUrl = () => {
+    const url = formatVideoUrl(videoUrlInput);
+    if (!isHost || !room || !url.trim()) return;
+    const payload = { video_url: url, current_timestamp_seconds: 0, is_playing: false };
+    setVideoError(null);
+    setVideoLoading(true);
+    setRoomState(prev => ({ ...prev, ...payload }));
+    setHasInteracted(true);
+    if (channelRef.current && connectionStatus === "SUBSCRIBED") {
+      channelRef.current.send({ type: "broadcast", event: "sync-event", payload });
+    }
+    supabase.from("room_state").update(payload).eq("room_id", room.id).then(() => {
+      setVideoUrlInput("");
+    });
+  };
+
   const handleSendMessage = async (e) => {
     e.preventDefault(); if (!newMessage.trim() || !user || !room) return;
     const content = newMessage.trim(); setNewMessage("");
@@ -339,6 +355,18 @@ export default function Room() {
       if (channelRef.current && connectionStatus === "SUBSCRIBED") channelRef.current.send({ type: "broadcast", event: "chat-msg", payload: fullMsg });
     }
   };
+
+  async function updateRoomState(newValues) {
+    if (!isHost || !room) return;
+    setRoomState(prev => {
+      const compensatedValues = { ...prev, ...newValues };
+      if (channelRef.current && connectionStatus === "SUBSCRIBED") {
+        channelRef.current.send({ type: "broadcast", event: "sync-event", payload: compensatedValues });
+      }
+      return compensatedValues;
+    });
+    await supabase.from("room_state").update(newValues).eq("room_id", room.id);
+  }
 
   const handleVideoClick = (e) => {
     if (e.target.closest('button')) return;
@@ -389,9 +417,17 @@ export default function Room() {
               <p className="mt-3 text-[#8B8B9A] text-[11px] font-black tracking-[0.3em] uppercase flex items-center gap-3">Room Code: <span className="text-white bg-white/5 px-3 py-1 rounded-md">{code}</span></p>
             </div>
             <div className="flex items-center gap-6 self-end md:self-auto">
-              <div className="px-5 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest bg-black text-white border border-white/10 shadow-xl shadow-black">
-                <span className={`w-2 h-2 rounded-full inline-block mr-2 shadow-[0_0_8px_rgba(34,197,94,0.6)] ${connectionStatus === "SUBSCRIBED" ? "bg-green-500 animate-pulse" : "bg-yellow-500"}`}></span>
-                {connectionStatus === "SUBSCRIBED" ? "Connected" : "Reconnecting..."}
+              <div className="px-5 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest bg-black text-white border border-white/10 shadow-xl shadow-black flex items-center gap-3">
+                <span className={`w-2 h-2 rounded-full shadow-[0_0_8px_currentColor] ${
+                  connectionStatus === "SUBSCRIBED" ? "bg-green-500 animate-pulse text-green-500" : 
+                  connectionStatus === "JOINING" ? "bg-yellow-500 animate-bounce text-yellow-500" : 
+                  "bg-red-500 animate-ping text-red-500"
+                }`}></span>
+                <span>{
+                  connectionStatus === "SUBSCRIBED" ? "Connected" : 
+                  connectionStatus === "JOINING" ? "Connecting..." : 
+                  "Reconnecting..."
+                }</span>
               </div>
               <button onClick={() => navigate("/", { replace: true })} className="px-8 py-3.5 rounded-full bg-[#881337] border border-[#BE123C]/20 text-white text-[10px] font-black uppercase tracking-[0.2em] hover:brightness-125 transition-all">Leave Room</button>
             </div>
@@ -444,7 +480,7 @@ export default function Room() {
                     <div className="space-y-8">
                       <div className="flex flex-col md:flex-row gap-4">
                         <input type="text" value={videoUrlInput} onChange={(e) => setVideoUrlInput(e.target.value)} placeholder="PASTE DIRECT MP4 LINK..." className="romantic-input flex-1 text-center font-bold tracking-[0.1em] placeholder:text-[#33334A] focus:scale-[1.01]" />
-                        <button onClick={() => { const url = formatVideoUrl(videoUrlInput); if (url.trim()) { updateRoomState({ video_url: url, current_timestamp_seconds: 0, is_playing: false }); setVideoUrlInput(""); } }} className="pill-button bg-primary-gradient px-12 text-white shadow-[0_10px_20px_rgba(190,18,60,0.2)]">SET VIDEO</button>
+                        <button onClick={handleSetVideoUrl} className="pill-button bg-primary-gradient px-12 text-white shadow-[0_10px_20px_rgba(190,18,60,0.2)]">SET VIDEO</button>
                       </div>
                       {!showControls && roomState?.video_url && ( <p className="text-center text-[10px] text-[#55556A] font-black uppercase tracking-[0.3em] animate-pulse">Tap video for controls</p> )}
                     </div>
