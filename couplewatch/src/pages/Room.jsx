@@ -57,182 +57,155 @@ export default function Room() {
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
-useEffect(() => {
-  if (localStream && localVideoRef.current) {
-    localVideoRef.current.srcObject = localStream;
-  }
-}, [localStream, callStatus]);
 
-useEffect(() => {
-  if (remoteStream && remoteVideoRef.current) {
-    remoteVideoRef.current.srcObject = remoteStream;
-  }
-}, [remoteStream, callStatus]);
-
-// WebRTC Logic
-const createPeerConnection = () => {
-  console.log("Creating Peer Connection...");
-  const pc = new RTCPeerConnection({
-    iceServers: [
-      { urls: "stun:stun.l.google.com:19302" },
-      { urls: "stun:stun1.l.google.com:19302" },
-      { urls: "stun:stun2.l.google.com:19302" },
-      { urls: "stun:stun3.l.google.com:19302" },
-      { urls: "stun:stun4.l.google.com:19302" },
-    ]
-  });
-
-  pc.onicecandidate = (event) => {
-    if (event.candidate && channelRef.current) {
-      console.log("Sending ICE candidate...");
-      channelRef.current.send({
-        type: "broadcast",
-        event: "webrtc-signal",
-        payload: { type: "candidate", candidate: event.candidate, senderId: user.id }
-      });
+  useEffect(() => {
+    if (localStream && localVideoRef.current) {
+      localVideoRef.current.srcObject = localStream;
     }
-  };
+  }, [localStream, callStatus]);
 
-  pc.ontrack = (event) => {
-    console.log("Received remote track:", event.track.kind);
-    const stream = event.streams[0];
-    setRemoteStream(stream);
-
-    // Immediate assignment for robustness
-    if (event.track.kind === 'video' && remoteVideoRef.current) {
-      remoteVideoRef.current.srcObject = stream;
-    } else if (event.track.kind === 'audio' && remoteAudioRef.current) {
-      remoteAudioRef.current.srcObject = stream;
+  useEffect(() => {
+    if (remoteStream && remoteVideoRef.current) {
+      remoteVideoRef.current.srcObject = remoteStream;
     }
-    setCallStatus("CONNECTED");
-  };
+  }, [remoteStream, callStatus]);
 
-  pc.onconnectionstatechange = () => {
-    console.log("Connection State Change:", pc.connectionState);
-    if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
-      console.warn("Connection failed or disconnected.");
-      endCall();
-    }
-  };
+  const createPeerConnection = () => {
+    const pc = new RTCPeerConnection({
+      iceServers: [
+        { urls: "stun:stun.l.google.com:19302" },
+        { urls: "stun:stun1.l.google.com:19302" },
+        { urls: "stun:stun2.l.google.com:19302" },
+        { urls: "stun:stun3.l.google.com:19302" },
+        { urls: "stun:stun4.l.google.com:19302" },
+      ]
+    });
 
-  peerConnectionRef.current = pc;
-  return pc;
-};
-
-const startCall = async (type) => {
-  if (!channelRef.current || connectionStatus !== "SUBSCRIBED") {
-    alert("Wait for room connection before calling.");
-    return;
-  }
-
-  try {
-    console.log(`Starting ${type} call...`);
-    const constraints = { 
-      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, 
-      video: type === 'video' 
+    pc.onicecandidate = (event) => {
+      if (event.candidate && channelRef.current) {
+        channelRef.current.send({
+          type: "broadcast",
+          event: "webrtc-signal",
+          payload: { type: "candidate", candidate: event.candidate, senderId: user.id }
+        });
+      }
     };
 
-    const stream = await navigator.mediaDevices.getUserMedia(constraints);
-    setLocalStream(stream);
-    setCallType(type);
-    setCallStatus("CONNECTING");
-    if (type === 'video') setIsVideoEnabled(true);
+    pc.ontrack = (event) => {
+      const stream = event.streams[0];
+      setRemoteStream(stream);
+      if (event.track.kind === 'video' && remoteVideoRef.current) {
+        remoteVideoRef.current.srcObject = stream;
+      } else if (event.track.kind === 'audio' && remoteAudioRef.current) {
+        remoteAudioRef.current.srcObject = stream;
+      }
+      setCallStatus("CONNECTED");
+    };
 
-    const pc = createPeerConnection();
-    stream.getTracks().forEach(track => pc.addTrack(track, stream));
+    pc.onconnectionstatechange = () => {
+      if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
+        endCall();
+      }
+    };
 
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
+    peerConnectionRef.current = pc;
+    return pc;
+  };
 
-    console.log("Sending offer...");
-    channelRef.current.send({
-      type: "broadcast",
-      event: "webrtc-signal",
-      payload: { type: "offer", sdp: offer, senderId: user.id, callType: type }
-    });
-  } catch (err) {
-    console.error("Call error (Media Devices):", err);
-    alert("Could not access camera/mic. Ensure you are on HTTPS and granted permissions.");
-    setCallStatus("IDLE");
-  }
-};
-
-const endCall = (sendSignal = true) => {
-  console.log("Ending call...");
-  if (sendSignal && channelRef.current) {
-    channelRef.current.send({
-      type: "broadcast",
-      event: "webrtc-signal",
-      payload: { type: "hangup", senderId: user.id }
-    });
-  }
-  if (localStream) {
-    localStream.getTracks().forEach(track => track.stop());
-    setLocalStream(null);
-  }
-  if (peerConnectionRef.current) {
-    peerConnectionRef.current.close();
-    peerConnectionRef.current = null;
-  }
-  setRemoteStream(null);
-  setCallStatus("IDLE");
-  setCallType(null);
-  setIsAudioMuted(false);
-  setIsVideoEnabled(false);
-};
-
-const handleWebRTCSignal = async (payload) => {
-  const { type, sdp, candidate, senderId, callType: incomingType } = payload;
-  if (senderId === user.id) return;
-
-  console.log(`Received WebRTC Signal: ${type} from ${senderId}`);
-
-  if (type === "offer") {
+  const startCall = async (type) => {
+    if (!channelRef.current || connectionStatus !== "SUBSCRIBED") return;
     try {
       const constraints = { 
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, 
-        video: incomingType === 'video' 
+        video: type === 'video' 
       };
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       setLocalStream(stream);
-      setCallType(incomingType);
+      setCallType(type);
       setCallStatus("CONNECTING");
-      if (incomingType === 'video') setIsVideoEnabled(true);
-
+      if (type === 'video') setIsVideoEnabled(true);
       const pc = createPeerConnection();
       stream.getTracks().forEach(track => pc.addTrack(track, stream));
-
-      await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-
-      console.log("Sending answer...");
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
       channelRef.current.send({
         type: "broadcast",
         event: "webrtc-signal",
-        payload: { type: "answer", sdp: answer, senderId: user.id }
+        payload: { type: "offer", sdp: offer, senderId: user.id, callType: type }
       });
     } catch (err) {
-      console.error("Error responding to offer:", err);
+      setCallStatus("IDLE");
     }
-  } else if (type === "answer") {
-    if (peerConnectionRef.current) {
-      console.log("Setting remote description (Answer)...");
-      await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(sdp));
+  };
+
+  const endCall = (sendSignal = true) => {
+    if (sendSignal && channelRef.current) {
+      channelRef.current.send({
+        type: "broadcast",
+        event: "webrtc-signal",
+        payload: { type: "hangup", senderId: user.id }
+      });
     }
-  } else if (type === "candidate") {
-    if (peerConnectionRef.current) {
+    if (localStream) { localStream.getTracks().forEach(track => track.stop()); setLocalStream(null); }
+    if (peerConnectionRef.current) { peerConnectionRef.current.close(); peerConnectionRef.current = null; }
+    setRemoteStream(null);
+    setCallStatus("IDLE");
+    setCallType(null);
+    setIsAudioMuted(false);
+    setIsVideoEnabled(false);
+  };
+
+  const toggleMute = () => {
+    if (localStream) {
+      const audioTrack = localStream.getAudioTracks()[0];
+      if (audioTrack) { audioTrack.enabled = !audioTrack.enabled; setIsAudioMuted(!audioTrack.enabled); }
+    }
+  };
+
+  const toggleVideo = () => {
+    if (localStream) {
+      const videoTrack = localStream.getVideoTracks()[0];
+      if (videoTrack) { videoTrack.enabled = !videoTrack.enabled; setIsVideoEnabled(videoTrack.enabled); }
+    }
+  };
+
+  const handleWebRTCSignal = async (payload) => {
+    const { type, sdp, candidate, senderId, callType: incomingType } = payload;
+    if (senderId === user.id) return;
+    if (type === "offer") {
       try {
-        console.log("Adding ICE candidate...");
-        await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate));
-      } catch (e) {
-        console.error("Error adding candidate:", e);
+        const constraints = { 
+          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, 
+          video: incomingType === 'video' 
+        };
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        setLocalStream(stream);
+        setCallType(incomingType);
+        setCallStatus("CONNECTING");
+        if (incomingType === 'video') setIsVideoEnabled(true);
+        const pc = createPeerConnection();
+        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+        await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        channelRef.current.send({
+          type: "broadcast",
+          event: "webrtc-signal",
+          payload: { type: "answer", sdp: answer, senderId: user.id }
+        });
+      } catch (err) { console.error(err); }
+    } else if (type === "answer") {
+      if (peerConnectionRef.current) await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(sdp));
+    } else if (type === "candidate") {
+      if (peerConnectionRef.current) {
+        try { await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate)); } 
+        catch (e) { console.error(e); }
       }
+    } else if (type === "hangup") {
+      endCall(false);
     }
-  } else if (type === "hangup") {
-    endCall(false);
-  }
-};
+  };
+
   useEffect(() => {
     if (playerRef.current && hasInteracted && roomState) {
       if (roomState.is_playing && playerRef.current.paused) playerRef.current.play().catch(() => {});
@@ -271,7 +244,7 @@ const handleWebRTCSignal = async (payload) => {
         playerRef.current.currentTime = data.current_timestamp_seconds;
         if (data.is_playing) playerRef.current.play().catch(() => {}); else playerRef.current.pause();
       }
-    } catch (err) { console.error("Sync error:", err); }
+    } catch (err) { console.error(err); }
   };
 
   useEffect(() => {
@@ -293,11 +266,15 @@ const handleWebRTCSignal = async (payload) => {
           supabase.from("messages").select("id, content, created_at, user_id, profiles(email)").eq("room_id", roomData.id).order("created_at", { ascending: true }).limit(50)
         ]);
         if (stateRes.data) setRoomState(stateRes.data);
+        let hostStatus = false;
         if (membersRes.data) {
           setMembers(membersRes.data);
           const current = membersRes.data.find(m => m.user_id === authUser.id);
-          if (current) setIsHost(current.role === "host");
+          if (current) hostStatus = current.role === "host";
         }
+        if (!hostStatus && roomData.created_by === authUser.id) hostStatus = true;
+        setIsHost(hostStatus);
+        isHostRef.current = hostStatus;
         if (messagesRes.data) setMessages(messagesRes.data);
       } catch (err) { navigate("/", { replace: true }); }
     }
@@ -351,31 +328,6 @@ const handleWebRTCSignal = async (payload) => {
     setupChannel();
     return () => { if (reconnectTimeout) clearTimeout(reconnectTimeout); if (subChannel) supabase.removeChannel(subChannel); };
   }, [room?.id, user?.id]);
-
-  const handleTyping = () => {
-    if (!channelRef.current || !user || connectionStatus !== "SUBSCRIBED") return;
-    if (!isTypingRef.current) {
-      isTypingRef.current = true;
-      channelRef.current.track({ online_at: new Date().toISOString(), is_typing: true, email: user.email });
-    }
-    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    typingTimeoutRef.current = setTimeout(() => {
-      isTypingRef.current = false;
-      if (channelRef.current) channelRef.current.track({ online_at: new Date().toISOString(), is_typing: false, email: user.email });
-    }, 3000);
-  };
-
-  async function updateRoomState(newValues) {
-    if (!isHost || !room) return;
-    setRoomState(prev => {
-      const compensatedValues = { ...prev, ...newValues };
-      if (channelRef.current && connectionStatus === "SUBSCRIBED") {
-        channelRef.current.send({ type: "broadcast", event: "sync-event", payload: compensatedValues });
-      }
-      return compensatedValues;
-    });
-    await supabase.from("room_state").update(newValues).eq("room_id", room.id);
-  }
 
   const handleSendMessage = async (e) => {
     e.preventDefault(); if (!newMessage.trim() || !user || !room) return;
@@ -489,9 +441,12 @@ const handleWebRTCSignal = async (payload) => {
                 </div>
                 <div className="p-8 border-t border-white/5 bg-white/[0.01]">
                   {isHost ? (
-                    <div className="flex flex-col md:flex-row gap-4">
-                      <input type="text" value={videoUrlInput} onChange={(e) => setVideoUrlInput(e.target.value)} placeholder="PASTE DIRECT MP4 LINK..." className="romantic-input flex-1 text-center font-bold tracking-[0.1em] placeholder:text-[#33334A]" />
-                      <button onClick={() => { const url = formatVideoUrl(videoUrlInput); if (url.trim()) { updateRoomState({ video_url: url, current_timestamp_seconds: 0, is_playing: false }); setVideoUrlInput(""); } }} className="pill-button bg-primary-gradient px-12 text-white">SET VIDEO</button>
+                    <div className="space-y-8">
+                      <div className="flex flex-col md:flex-row gap-4">
+                        <input type="text" value={videoUrlInput} onChange={(e) => setVideoUrlInput(e.target.value)} placeholder="PASTE DIRECT MP4 LINK..." className="romantic-input flex-1 text-center font-bold tracking-[0.1em] placeholder:text-[#33334A] focus:scale-[1.01]" />
+                        <button onClick={() => { const url = formatVideoUrl(videoUrlInput); if (url.trim()) { updateRoomState({ video_url: url, current_timestamp_seconds: 0, is_playing: false }); setVideoUrlInput(""); } }} className="pill-button bg-primary-gradient px-12 text-white shadow-[0_10px_20px_rgba(190,18,60,0.2)]">SET VIDEO</button>
+                      </div>
+                      {!showControls && roomState?.video_url && ( <p className="text-center text-[10px] text-[#55556A] font-black uppercase tracking-[0.3em] animate-pulse">Tap video for controls</p> )}
                     </div>
                   ) : (
                     <div className="flex flex-col items-center gap-8">
@@ -561,9 +516,9 @@ const handleWebRTCSignal = async (payload) => {
                         </div>
                         <div className="flex flex-col items-center gap-2">
                           <div className="flex gap-1 h-3 items-end">
-                            <div className={`w-1 rounded-full transition-all ${callStatus === "CONNECTED" ? "bg-[#881337] animate-[bounce_0.6s_infinite] shadow-[0_0_8px_#881337]" : "bg-[#55556A]"}`}></div>
-                            <div className={`w-1 rounded-full transition-all ${callStatus === "CONNECTED" ? "bg-[#881337] animate-[bounce_0.8s_infinite] shadow-[0_0_8px_#881337] delay-75" : "bg-[#55556A]"}`}></div>
-                            <div className={`w-1 rounded-full transition-all ${callStatus === "CONNECTED" ? "bg-[#881337] animate-[bounce_0.7s_infinite] shadow-[0_0_8px_#881337] delay-150" : "bg-[#55556A]"}`}></div>
+                            <div className={`w-1 rounded-full transition-all ${callStatus === "CONNECTED" ? "bg-[#881337] animate-[bounce_0.6s_infinite] shadow-[0_0_12px_#881337]" : "bg-[#55556A]"}`}></div>
+                            <div className={`w-1 rounded-full transition-all ${callStatus === "CONNECTED" ? "bg-[#881337] animate-[bounce_0.8s_infinite] shadow-[0_0_12px_#881337] delay-75" : "bg-[#55556A]"}`}></div>
+                            <div className={`w-1 rounded-full transition-all ${callStatus === "CONNECTED" ? "bg-[#881337] animate-[bounce_0.7s_infinite] shadow-[0_0_12px_#881337] delay-150" : "bg-[#55556A]"}`}></div>
                           </div>
                           <span className="text-[10px] font-black uppercase tracking-widest text-[#8B8B9A]">Partner</span>
                         </div>
@@ -572,55 +527,32 @@ const handleWebRTCSignal = async (payload) => {
                     <div className="flex items-center gap-6">
                       <button onClick={toggleMute} className={`w-12 h-12 rounded-full flex items-center justify-center transition-all shadow-xl ${isAudioMuted ? "bg-[#881337]/20 text-[#BE123C] border border-[#881337]/40" : "bg-[#1A1A1F] border border-white/10 text-white"}`}><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" /></svg></button>
                       <button onClick={() => endCall()} className="w-16 h-16 rounded-full bg-[#881337] flex items-center justify-center text-white shadow-[0_0_30px_rgba(136,19,55,0.5)] hover:scale-110 active:scale-90 transition-all"><svg className="w-7 h-7 rotate-[135deg]" fill="currentColor" viewBox="0 0 24 24"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z" /></svg></button>
-                      <button className="w-12 h-12 rounded-full bg-[#1A1A1F] border border-white/10 text-white flex items-center justify-center hover:bg-white/10 transition-all shadow-xl"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /></svg></button>
+                      <button className="w-12 h-12 rounded-full bg-[#1A1A1F] border border-white/10 text-white flex items-center justify-center hover:bg-white/10 transition-all shadow-xl"><svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" /></svg></button>
                     </div>
                   </div>
                 ) : (
-                  /* ZONE 2 C: SYMMETRIC SPLIT VIDEO CALL */
                   <div className="w-full h-full flex flex-col p-2 animate-in fade-in duration-500">
                     <div className="flex gap-2 h-[280px] w-full">
-                      {/* Partner Section */}
                       <div className="flex-1 rounded-[18px] bg-black border border-white/5 overflow-hidden relative shadow-2xl">
-                        {callStatus === "CONNECTED" ? (
-                          <video ref={remoteVideoRef} autoPlay playsInline className="w-full h-full object-cover" />
-                        ) : (
-                          <div className="w-full h-full flex flex-col items-center justify-center bg-[#0D0D12]">
+                        <video ref={remoteVideoRef} autoPlay playsInline className={`w-full h-full object-cover transition-opacity duration-700 ${callStatus === "CONNECTED" ? 'opacity-100' : 'opacity-0'}`} />
+                        {callStatus !== "CONNECTED" && (
+                          <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0D0D12]">
                             <div className="w-10 h-10 border-2 border-[#881337]/20 border-t-[#BE123C] rounded-full animate-spin mb-3"></div>
                             <span className="text-[8px] font-black uppercase tracking-widest text-[#881337]/60">Connecting...</span>
                           </div>
                         )}
-                        <div className="absolute top-3 left-3 px-2 py-1 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center gap-1.5 z-20">
-                          <div className={`w-1 h-1 rounded-full ${callStatus === "CONNECTED" ? "bg-green-500" : "bg-yellow-500 animate-pulse"}`}></div>
-                          <span className="text-[7px] font-black uppercase text-white tracking-widest">Partner</span>
-                        </div>
+                        <div className="absolute top-3 left-3 px-2 py-1 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center gap-1.5 z-20"><div className={`w-1 h-1 rounded-full ${callStatus === "CONNECTED" ? "bg-green-500" : "bg-yellow-500 animate-pulse"}`}></div><span className="text-[7px] font-black uppercase text-white tracking-widest">Partner</span></div>
                       </div>
-
-                      {/* Your Section */}
                       <div className="flex-1 rounded-[18px] bg-black border border-[#BE123C]/20 overflow-hidden relative shadow-2xl transition-all">
                         <video ref={localVideoRef} autoPlay playsInline muted className={`w-full h-full object-cover scale-x-[-1] transition-opacity duration-700 ${!isVideoEnabled ? 'opacity-0' : 'opacity-100'}`} />
-                        {!isVideoEnabled && (
-                          <div className="absolute inset-0 flex items-center justify-center bg-[#0D0D12]">
-                            <span className="text-[8px] font-black uppercase text-white/30 tracking-widest">Camera Off</span>
-                          </div>
-                        )}
-                        <div className="absolute top-3 left-3 px-2 py-1 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center gap-1.5 z-20">
-                          <div className="w-1 h-1 rounded-full bg-green-500"></div>
-                          <span className="text-[7px] font-black uppercase text-white tracking-widest">You</span>
-                        </div>
+                        {!isVideoEnabled && <div className="absolute inset-0 flex items-center justify-center bg-[#0D0D12]"><span className="text-[8px] font-black uppercase text-white/30 tracking-widest">Camera Off</span></div>}
+                        <div className="absolute top-3 left-3 px-2 py-1 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center gap-1.5 z-20"><div className="w-1 h-1 rounded-full bg-green-500"></div><span className="text-[7px] font-black uppercase text-white tracking-widest">You</span></div>
                       </div>
                     </div>
-
-                    {/* Controls centered below videos */}
                     <div className="flex items-center justify-center gap-4 mt-4 py-2">
-                      <button onClick={toggleMute} className={`w-11 h-11 rounded-full flex items-center justify-center transition-all shadow-xl ${isAudioMuted ? "bg-[#881337]/20 text-[#BE123C] border border-[#881337]/40" : "bg-[#1A1A1F] border border-white/10 text-white hover:bg-white/10"}`}>
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" /></svg>
-                      </button>
-                      <button onClick={toggleVideo} className={`w-11 h-11 rounded-full flex items-center justify-center transition-all shadow-xl ${!isVideoEnabled ? "bg-[#881337]/20 text-[#BE123C] border border-[#881337]/40" : "bg-[#1A1A1F] border border-white/10 text-white hover:bg-white/10"}`}>
-                        <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" /></svg>
-                      </button>
-                      <button onClick={() => endCall()} className="w-14 h-14 rounded-full bg-[#881337] flex items-center justify-center text-white shadow-[0_0_25px_rgba(136,19,55,0.6)] hover:scale-110 active:scale-90 transition-all">
-                        <svg className="w-6 h-6 rotate-[135deg]" fill="currentColor" viewBox="0 0 24 24"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z" /></svg>
-                      </button>
+                      <button onClick={toggleMute} className={`w-11 h-11 rounded-full flex items-center justify-center transition-all shadow-xl ${isAudioMuted ? "bg-[#881337]/20 text-[#BE123C] border border-[#881337]/40" : "bg-[#1A1A1F] border border-white/10 text-white"}`}><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" /></svg></button>
+                      <button onClick={toggleVideo} className={`w-11 h-11 rounded-full flex items-center justify-center transition-all shadow-xl ${!isVideoEnabled ? "bg-[#881337]/20 text-[#BE123C] border border-[#881337]/40" : "bg-[#1A1A1F] border border-white/10 text-white"}`}><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" /></svg></button>
+                      <button onClick={() => endCall()} className="w-14 h-14 rounded-full bg-[#881337] flex items-center justify-center text-white shadow-[0_0_25px_rgba(136,19,55,0.6)] hover:scale-110 active:scale-90 transition-all"><svg className="w-6 h-6 rotate-[135deg]" fill="currentColor" viewBox="0 0 24 24"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z" /></svg></button>
                     </div>
                   </div>
                 )}
