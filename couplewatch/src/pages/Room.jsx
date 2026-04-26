@@ -38,17 +38,20 @@ export default function Room() {
   const seekFeedbackTimeoutRef = useRef(null);
   const lastClickTimeRef = useRef(0);
 
+  // WebRTC States
   const [localStream, setLocalStream] = useState(null);
   const [remoteStream, setRemoteStream] = useState(null);
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [isVideoEnabled, setIsVideoEnabled] = useState(false);
-  const [callStatus, setCallStatus] = useState("IDLE"); // IDLE, CONNECTING, CONNECTED
-  const [callType, setCallType] = useState(null); // 'audio' or 'video'
+  const [callStatus, setCallStatus] = useState("IDLE"); // IDLE, CONNECTING, CONNECTED, INCOMING
+  const [callType, setCallType] = useState(null);
+  const [pendingOffer, setPendingOffer] = useState(null);
   
   const peerConnectionRef = useRef(null);
   const remoteAudioRef = useRef(null);
   const localVideoRef = useRef(null);
   const remoteVideoRef = useRef(null);
+  const iceCandidatesQueue = useRef([]);
 
   useEffect(() => { roomStateRef.current = roomState; }, [roomState]);
   useEffect(() => { isHostRef.current = isHost; }, [isHost]);
@@ -68,9 +71,14 @@ export default function Room() {
     if (remoteStream && remoteVideoRef.current) {
       remoteVideoRef.current.srcObject = remoteStream;
     }
+    if (remoteStream && remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = remoteStream;
+    }
   }, [remoteStream, callStatus]);
 
+  // WebRTC Logic
   const createPeerConnection = () => {
+    console.log("WebRTC: Creating Peer Connection...");
     const pc = new RTCPeerConnection({
       iceServers: [
         { urls: "stun:stun.l.google.com:19302" },
@@ -83,6 +91,7 @@ export default function Room() {
 
     pc.onicecandidate = (event) => {
       if (event.candidate && channelRef.current) {
+        console.log("WebRTC: Sending ICE candidate...");
         channelRef.current.send({
           type: "broadcast",
           event: "webrtc-signal",
@@ -92,19 +101,16 @@ export default function Room() {
     };
 
     pc.ontrack = (event) => {
+      console.log("WebRTC: Received remote track:", event.track.kind);
       const stream = event.streams[0];
       setRemoteStream(stream);
-      if (event.track.kind === 'video' && remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = stream;
-      } else if (event.track.kind === 'audio' && remoteAudioRef.current) {
-        remoteAudioRef.current.srcObject = stream;
-      }
       setCallStatus("CONNECTED");
     };
 
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === "disconnected" || pc.connectionState === "failed") {
-        endCall();
+      console.log("WebRTC: Connection State:", pc.connectionState);
+      if (pc.connectionState === "disconnected" || pc.connectionState === "failed" || pc.connectionState === "closed") {
+        endCall(false);
       }
     };
 
@@ -113,8 +119,12 @@ export default function Room() {
   };
 
   const startCall = async (type) => {
-    if (!channelRef.current || connectionStatus !== "SUBSCRIBED") return;
+    if (!channelRef.current || connectionStatus !== "SUBSCRIBED") {
+      alert("Wait for room connection...");
+      return;
+    }
     try {
+      console.log(`WebRTC: Starting ${type} call...`);
       const constraints = { 
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, 
         video: type === 'video' 
@@ -124,21 +134,68 @@ export default function Room() {
       setCallType(type);
       setCallStatus("CONNECTING");
       if (type === 'video') setIsVideoEnabled(true);
+
       const pc = createPeerConnection();
       stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
+
       channelRef.current.send({
         type: "broadcast",
         event: "webrtc-signal",
         payload: { type: "offer", sdp: offer, senderId: user.id, callType: type }
       });
     } catch (err) {
+      console.error("WebRTC: Start call error:", err);
+      alert("Camera/Mic access denied or unavailable.");
       setCallStatus("IDLE");
     }
   };
 
+  const joinIncomingCall = async () => {
+    if (!pendingOffer) return;
+    try {
+      const { sdp, incomingType } = pendingOffer;
+      const constraints = { 
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, 
+        video: incomingType === 'video' 
+      };
+      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+      setLocalStream(stream);
+      setCallType(incomingType);
+      setCallStatus("CONNECTING");
+      if (incomingType === 'video') setIsVideoEnabled(true);
+
+      const pc = createPeerConnection();
+      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+
+      await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      
+      // Process queued candidates
+      while (iceCandidatesQueue.current.length > 0) {
+        const candidate = iceCandidatesQueue.current.shift();
+        await pc.addIceCandidate(new RTCIceCandidate(candidate));
+      }
+
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
+
+      channelRef.current.send({
+        type: "broadcast",
+        event: "webrtc-signal",
+        payload: { type: "answer", sdp: answer, senderId: user.id }
+      });
+      setPendingOffer(null);
+    } catch (err) {
+      console.error("WebRTC: Join call error:", err);
+      setCallStatus("IDLE");
+      setPendingOffer(null);
+    }
+  };
+
   const endCall = (sendSignal = true) => {
+    console.log("WebRTC: Ending call session...");
     if (sendSignal && channelRef.current) {
       channelRef.current.send({
         type: "broadcast",
@@ -147,10 +204,17 @@ export default function Room() {
       });
     }
     if (localStream) { localStream.getTracks().forEach(track => track.stop()); setLocalStream(null); }
-    if (peerConnectionRef.current) { peerConnectionRef.current.close(); peerConnectionRef.current = null; }
+    if (peerConnectionRef.current) {
+      peerConnectionRef.current.onicecandidate = null;
+      peerConnectionRef.current.ontrack = null;
+      peerConnectionRef.current.close();
+      peerConnectionRef.current = null;
+    }
     setRemoteStream(null);
     setCallStatus("IDLE");
     setCallType(null);
+    setPendingOffer(null);
+    iceCandidatesQueue.current = [];
     setIsAudioMuted(false);
     setIsVideoEnabled(false);
   };
@@ -172,34 +236,26 @@ export default function Room() {
   const handleWebRTCSignal = async (payload) => {
     const { type, sdp, candidate, senderId, callType: incomingType } = payload;
     if (senderId === user.id) return;
+
+    console.log(`WebRTC: Signal received -> ${type}`);
+
     if (type === "offer") {
-      try {
-        const constraints = { 
-          audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }, 
-          video: incomingType === 'video' 
-        };
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        setLocalStream(stream);
-        setCallType(incomingType);
-        setCallStatus("CONNECTING");
-        if (incomingType === 'video') setIsVideoEnabled(true);
-        const pc = createPeerConnection();
-        stream.getTracks().forEach(track => pc.addTrack(track, stream));
-        await pc.setRemoteDescription(new RTCSessionDescription(sdp));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        channelRef.current.send({
-          type: "broadcast",
-          event: "webrtc-signal",
-          payload: { type: "answer", sdp: answer, senderId: user.id }
-        });
-      } catch (err) { console.error(err); }
+      setPendingOffer({ sdp, incomingType });
+      setCallStatus("INCOMING");
     } else if (type === "answer") {
-      if (peerConnectionRef.current) await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(sdp));
-    } else if (type === "candidate") {
       if (peerConnectionRef.current) {
-        try { await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate)); } 
-        catch (e) { console.error(e); }
+        await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(sdp));
+        // Process queued candidates
+        while (iceCandidatesQueue.current.length > 0) {
+          const cand = iceCandidatesQueue.current.shift();
+          await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(cand));
+        }
+      }
+    } else if (type === "candidate") {
+      if (peerConnectionRef.current && peerConnectionRef.current.remoteDescription) {
+        try { await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate)); } catch (e) {}
+      } else {
+        iceCandidatesQueue.current.push(candidate);
       }
     } else if (type === "hangup") {
       endCall(false);
@@ -328,6 +384,19 @@ export default function Room() {
     setupChannel();
     return () => { if (reconnectTimeout) clearTimeout(reconnectTimeout); if (subChannel) supabase.removeChannel(subChannel); };
   }, [room?.id, user?.id]);
+
+  const handleTyping = () => {
+    if (!channelRef.current || !user || connectionStatus !== "SUBSCRIBED") return;
+    if (!isTypingRef.current) {
+      isTypingRef.current = true;
+      channelRef.current.track({ online_at: new Date().toISOString(), is_typing: true, email: user.email });
+    }
+    if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+    typingTimeoutRef.current = setTimeout(() => {
+      isTypingRef.current = false;
+      if (channelRef.current) channelRef.current.track({ online_at: new Date().toISOString(), is_typing: false, email: user.email });
+    }, 3000);
+  };
 
   const handleSetVideoUrl = () => {
     const url = formatVideoUrl(videoUrlInput);
@@ -530,6 +599,17 @@ export default function Room() {
                       <button onClick={() => startCall('video')} className="w-14 h-14 rounded-[12px] bg-[#1A1A1F] border border-[#881337]/40 flex items-center justify-center text-white hover:shadow-[0_0_20px_rgba(136,19,55,0.4)] hover:border-[#881337] transition-all group" title="Video Call"><svg className="w-6 h-6 group-hover:text-[#BE123C]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" /></svg></button>
                     </div>
                   </div>
+                ) : callStatus === "INCOMING" ? (
+                  <div className="flex flex-col items-center justify-center p-10 animate-in zoom-in duration-500">
+                    <div className="w-24 h-24 rounded-full bg-[#881337]/20 border border-[#881337] flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(136,19,55,0.4)] animate-pulse">
+                      <svg className="w-10 h-10 text-[#BE123C]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
+                    </div>
+                    <p className="text-[12px] font-black uppercase tracking-[0.3em] mb-8 text-white/90">Incoming {pendingOffer?.incomingType} Call</p>
+                    <div className="flex items-center gap-4">
+                      <button onClick={joinIncomingCall} className="px-8 py-3 rounded-full bg-green-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-green-500 shadow-lg transition-all">Accept</button>
+                      <button onClick={() => endCall()} className="px-8 py-3 rounded-full bg-red-600 text-white text-[10px] font-black uppercase tracking-widest hover:bg-red-500 shadow-lg transition-all">Decline</button>
+                    </div>
+                  </div>
                 ) : callType === 'audio' ? (
                   <div className="flex flex-col items-center justify-center p-8 w-full animate-in fade-in duration-500">
                     <div className="flex items-center gap-12 mb-10">
@@ -552,9 +632,9 @@ export default function Room() {
                         </div>
                         <div className="flex flex-col items-center gap-2">
                           <div className="flex gap-1 h-3 items-end">
-                            <div className={`w-1 rounded-full transition-all ${callStatus === "CONNECTED" ? "bg-[#881337] animate-[bounce_0.6s_infinite] shadow-[0_0_12px_#881337]" : "bg-[#55556A]"}`}></div>
-                            <div className={`w-1 rounded-full transition-all ${callStatus === "CONNECTED" ? "bg-[#881337] animate-[bounce_0.8s_infinite] shadow-[0_0_12px_#881337] delay-75" : "bg-[#55556A]"}`}></div>
-                            <div className={`w-1 rounded-full transition-all ${callStatus === "CONNECTED" ? "bg-[#881337] animate-[bounce_0.7s_infinite] shadow-[0_0_12px_#881337] delay-150" : "bg-[#55556A]"}`}></div>
+                            <div className={`w-1 rounded-full transition-all ${callStatus === "CONNECTED" ? "bg-[#881337] animate-[bounce_0.6s_infinite] shadow-[0_0_8px_#881337]" : "bg-[#55556A]"}`}></div>
+                            <div className={`w-1 rounded-full transition-all ${callStatus === "CONNECTED" ? "bg-[#881337] animate-[bounce_0.8s_infinite] shadow-[0_0_8px_#881337] delay-75" : "bg-[#55556A]"}`}></div>
+                            <div className={`w-1 rounded-full transition-all ${callStatus === "CONNECTED" ? "bg-[#881337] animate-[bounce_0.7s_infinite] shadow-[0_0_8px_#881337] delay-150" : "bg-[#55556A]"}`}></div>
                           </div>
                           <span className="text-[10px] font-black uppercase tracking-widest text-[#8B8B9A]">Partner</span>
                         </div>
@@ -586,9 +666,9 @@ export default function Room() {
                       </div>
                     </div>
                     <div className="flex items-center justify-center gap-4 mt-4 py-2">
-                      <button onClick={toggleMute} className={`w-11 h-11 rounded-full flex items-center justify-center transition-all shadow-xl ${isAudioMuted ? "bg-[#881337]/20 text-[#BE123C] border border-[#881337]/40" : "bg-[#1A1A1F] border border-white/10 text-white"}`}><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" /></svg></button>
-                      <button onClick={toggleVideo} className={`w-11 h-11 rounded-full flex items-center justify-center transition-all shadow-xl ${!isVideoEnabled ? "bg-[#881337]/20 text-[#BE123C] border border-[#881337]/40" : "bg-[#1A1A1F] border border-white/10 text-white"}`}><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" /></svg></button>
-                      <button onClick={() => endCall()} className="w-14 h-14 rounded-full bg-[#881337] flex items-center justify-center text-white shadow-[0_0_25px_rgba(136,19,55,0.6)] hover:scale-110 active:scale-90 transition-all"><svg className="w-6 h-6 rotate-[135deg]" fill="currentColor" viewBox="0 0 24 24"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z" /></svg></button>
+                      <button onClick={toggleMute} className={`w-11 h-11 rounded-full flex items-center justify-center transition-all shadow-xl ${isAudioMuted ? "bg-[#881337] border-[#881337] text-white shadow-[0_0_15px_rgba(136,19,55,0.5)]" : "bg-black/60 border-white/10 text-white hover:bg-black/80"}`}><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 18.75a6 6 0 006-6v-1.5m-6 7.5a6 6 0 01-6-6v-1.5m6 7.5v3.75m-3.75 0h7.5M12 15.75a3 3 0 01-3-3V4.5a3 3 0 116 0v8.25a3 3 0 01-3 3z" /></svg></button>
+                      <button onClick={toggleVideo} className={`w-11 h-11 rounded-full flex items-center justify-center backdrop-blur-3xl border transition-all ${!isVideoEnabled ? "bg-[#881337] border-[#881337] text-white shadow-[0_0_15px_rgba(136,19,55,0.5)]" : "bg-black/60 border-white/10 text-white hover:bg-black/80"}`}><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" /></svg></button>
+                      <button onClick={() => endCall()} className="w-14 h-14 rounded-full bg-[#881337] flex items-center justify-center text-white border border-[#881337]/50 shadow-[0_0_25px_rgba(136,19,55,0.6)] hover:scale-110 active:scale-90 transition-all"><svg className="w-6 h-6 rotate-[135deg]" fill="currentColor" viewBox="0 0 24 24"><path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z" /></svg></button>
                     </div>
                   </div>
                 )}
