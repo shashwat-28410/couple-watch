@@ -281,13 +281,26 @@ export default function Room() {
 
   useEffect(() => {
     if (!isHost || !roomState?.is_playing || connectionStatus !== "SUBSCRIBED") return;
-    const interval = setInterval(() => {
+    
+    // Fast broadcast for real-time sync (2s)
+    const syncInterval = setInterval(() => {
       if (playerRef.current && channelRef.current) {
         channelRef.current.send({ type: "broadcast", event: "sync-event", payload: { ...roomStateRef.current, current_timestamp_seconds: playerRef.current.currentTime } });
       }
     }, 2000);
-    return () => clearInterval(interval);
-  }, [isHost, roomState?.is_playing, connectionStatus]);
+
+    // Slower DB update for persistence across refreshes (10s)
+    const dbInterval = setInterval(() => {
+      if (playerRef.current && room?.id) {
+        supabase.from("room_state").update({ current_timestamp_seconds: playerRef.current.currentTime }).eq("room_id", room.id);
+      }
+    }, 10000);
+
+    return () => {
+      clearInterval(syncInterval);
+      clearInterval(dbInterval);
+    };
+  }, [isHost, roomState?.is_playing, connectionStatus, room?.id]);
 
   const handleForceSync = async () => {
     if (!room?.id || !playerRef.current) return;
@@ -321,7 +334,10 @@ export default function Room() {
           supabase.from("room_members").select("id, role, user_id, profiles(email)").eq("room_id", roomData.id),
           supabase.from("messages").select("id, content, created_at, user_id, profiles(email)").eq("room_id", roomData.id).order("created_at", { ascending: true }).limit(50)
         ]);
-        if (stateRes.data) setRoomState(stateRes.data);
+        if (stateRes.data) {
+          setRoomState(stateRes.data);
+          if (stateRes.data.video_url) setVideoUrlInput(stateRes.data.video_url);
+        }
         let hostStatus = false;
         if (membersRes.data) {
           setMembers(membersRes.data);
@@ -460,6 +476,21 @@ export default function Room() {
     }
   };
 
+  // 🔄 Automatic cleanup when leaving
+  useEffect(() => {
+    const handleBeforeUnload = () => endCall(true);
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+      endCall(true); // Stop camera/mic and WebRTC
+    };
+  }, [user?.id]);
+
+  const handleLeaveRoom = () => {
+    endCall(true);
+    window.location.href = "/"; // Hard refresh and redirect to Home
+  };
+
   const formatVideoUrl = (url) => {
     if (!url) return url;
     let formatted = url.trim();
@@ -498,7 +529,7 @@ export default function Room() {
                   "Reconnecting..."
                 }</span>
               </div>
-              <button onClick={() => navigate("/", { replace: true })} className="px-8 py-3.5 rounded-full bg-[#881337] border border-[#BE123C]/20 text-white text-[10px] font-black uppercase tracking-[0.2em] hover:brightness-125 transition-all">Leave Room</button>
+              <button onClick={handleLeaveRoom} className="px-8 py-3.5 rounded-full bg-[#881337] border border-[#BE123C]/20 text-white text-[10px] font-black uppercase tracking-[0.2em] hover:brightness-125 transition-all">Leave Room</button>
             </div>
           </div>
 
