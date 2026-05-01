@@ -10,10 +10,11 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     detectSessionInUrl: true,
   },
   realtime: {
-    timeout: 30000, // Increase to 30 seconds
     params: {
-      eventsPerSecond: 40,
+      eventsPerSecond: 20,
     },
+    timeout: 60000, // Increase to 60s
+    heartbeatIntervalMs: 3000, // Frequent heartbeats to keep connection alive
   },
 });
 

@@ -353,52 +353,110 @@ export default function Room() {
     initRoom();
   }, [code]);
 
+  const isReconnectingRef = useRef(false);
+
   useEffect(() => {
     if (!room?.id || !user?.id) return;
     let subChannel;
     let reconnectTimeout;
+
     const setupChannel = async () => {
-      if (subChannel) await supabase.removeChannel(subChannel);
-      subChannel = supabase.channel(`room_${room.id}`, { config: { presence: { key: user.id }, broadcast: { self: false, ack: false } } });
-      channelRef.current = subChannel;
-      subChannel
-        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "room_state", filter: `room_id=eq.${room.id}` }, (p) => setRoomState(prev => ({ ...prev, ...p.new })))
-        .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `room_id=eq.${room.id}` }, async (payload) => {
-          setMessages(current => current.some(m => m.id === payload.new.id) ? current : [...current, { ...payload.new, profiles: { email: "Partner" } }]);
-          supabase.from("profiles").select("email").eq("id", payload.new.user_id).single().then(({ data }) => {
-            if (data) setMessages(c => c.map(m => m.id === payload.new.id ? { ...m, profiles: data } : m));
-          });
-        })
-        .on("broadcast", { event: "chat-msg" }, ({ payload }) => setMessages(current => current.some(x => x.id === payload.id) ? current : [...current, payload]))
-        .on("broadcast", { event: "webrtc-signal" }, ({ payload }) => handleWebRTCSignal(payload))
-        .on("broadcast", { event: "sync-event" }, ({ payload }) => setRoomState(payload))
-        .on("broadcast", { event: "request-sync" }, () => {
-          if (isHostRef.current && playerRef.current && channelRef.current) {
-            channelRef.current.send({ type: "broadcast", event: "sync-event", payload: { ...roomStateRef.current, current_timestamp_seconds: playerRef.current.currentTime } });
-          }
-        })
-        .on("presence", { event: "sync" }, () => {
-          const state = subChannel.presenceState();
-          setOnlineUsers(Object.keys(state));
-          const typing = [];
-          Object.keys(state).forEach(key => {
-            if (key === user.id) return;
-            const presenceEntries = state[key];
-            if (presenceEntries?.some(p => p.is_typing)) typing.push(presenceEntries[0].email?.split('@')[0] || "Partner");
-          });
-          setTypingUsers(typing);
-        })
-        .subscribe(async (status) => {
-          setConnectionStatus(status);
-          if (status === "SUBSCRIBED") await subChannel.track({ online_at: new Date().toISOString(), is_typing: false, email: user.email });
-          if (status === "TIMED_OUT" || status === "CLOSED" || status === "CHANNEL_ERROR") {
-            if (reconnectTimeout) clearTimeout(reconnectTimeout);
-            reconnectTimeout = setTimeout(setupChannel, 2000);
-          }
+      if (isReconnectingRef.current) return;
+      isReconnectingRef.current = true;
+
+      try {
+        if (subChannel) {
+          console.log("Room: Removing old channel...");
+          await supabase.removeChannel(subChannel);
+        }
+
+        console.log("Room: Setting up new channel...");
+        subChannel = supabase.channel(`room_${room.id}`, { 
+          config: { 
+            presence: { key: user.id }, 
+            broadcast: { self: false, ack: false } 
+          } 
         });
+        channelRef.current = subChannel;
+
+        subChannel
+          .on("postgres_changes", { event: "UPDATE", schema: "public", table: "room_state", filter: `room_id=eq.${room.id}` }, (p) => setRoomState(prev => ({ ...prev, ...p.new })))
+          .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `room_id=eq.${room.id}` }, async (payload) => {
+            setMessages(current => current.some(m => m.id === payload.new.id) ? current : [...current, { ...payload.new, profiles: { email: "Partner" } }]);
+            supabase.from("profiles").select("email").eq("id", payload.new.user_id).single().then(({ data }) => {
+              if (data) setMessages(c => c.map(m => m.id === payload.new.id ? { ...m, profiles: data } : m));
+            });
+          })
+          .on("broadcast", { event: "chat-msg" }, ({ payload }) => setMessages(current => current.some(x => x.id === payload.id) ? current : [...current, payload]))
+          .on("broadcast", { event: "webrtc-signal" }, ({ payload }) => handleWebRTCSignal(payload))
+          .on("broadcast", { event: "sync-event" }, ({ payload }) => setRoomState(payload))
+          .on("broadcast", { event: "request-sync" }, () => {
+            if (isHostRef.current && playerRef.current && channelRef.current) {
+              channelRef.current.send({ type: "broadcast", event: "sync-event", payload: { ...roomStateRef.current, current_timestamp_seconds: playerRef.current.currentTime } });
+            }
+          })
+          .on("presence", { event: "sync" }, () => {
+            const state = subChannel.presenceState();
+            setOnlineUsers(Object.keys(state));
+            const typing = [];
+            Object.keys(state).forEach(key => {
+              if (key === user.id) return;
+              const presenceEntries = state[key];
+              if (presenceEntries?.some(p => p.is_typing)) typing.push(presenceEntries[0].email?.split('@')[0] || "Partner");
+            });
+            setTypingUsers(typing);
+          })
+          .subscribe(async (status) => {
+            console.log("Room: Channel status ->", status);
+            setConnectionStatus(status);
+            isReconnectingRef.current = false;
+
+            if (status === "SUBSCRIBED") {
+              await subChannel.track({ online_at: new Date().toISOString(), is_typing: false, email: user.email });
+            }
+            
+            if (status === "TIMED_OUT" || status === "CLOSED" || status === "CHANNEL_ERROR") {
+              if (reconnectTimeout) clearTimeout(reconnectTimeout);
+              reconnectTimeout = setTimeout(setupChannel, 3000);
+            }
+          });
+      } catch (err) {
+        console.error("Room: Setup channel error:", err);
+        isReconnectingRef.current = false;
+      }
     };
     setupChannel();
-    return () => { if (reconnectTimeout) clearTimeout(reconnectTimeout); if (subChannel) supabase.removeChannel(subChannel); };
+
+    // 🌙 Handle Tab Hibernation: Force re-sync or re-claim sync
+    const handleVisibilityChange = async () => {
+      if (document.visibilityState === "visible") {
+        console.log("Room: Tab became visible. Waiting for connection to stabilize...");
+        
+        // Give the browser 1 second to restore internet/socket connection
+        setTimeout(async () => {
+          if (isHostRef.current) {
+            console.log("Room: Host returned, broadcasting current state...");
+            if (playerRef.current && channelRef.current) {
+              channelRef.current.send({ 
+                type: "broadcast", 
+                event: "sync-event", 
+                payload: { ...roomStateRef.current, current_timestamp_seconds: playerRef.current.currentTime } 
+              });
+            }
+          } else {
+            console.log("Room: Member returned, force-syncing from DB...");
+            handleForceSync();
+          }
+        }, 1500);
+      }
+    };
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    return () => { 
+      if (reconnectTimeout) clearTimeout(reconnectTimeout); 
+      if (subChannel) supabase.removeChannel(subChannel); 
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
   }, [room?.id, user?.id]);
 
   const handleTyping = () => {
@@ -459,6 +517,7 @@ export default function Room() {
     const isDoubleTap = now - lastClickTimeRef.current < 300;
     lastClickTimeRef.current = now;
     if (isDoubleTap) {
+      if (!isHost) return; // 🛑 Block member seeking
       const rect = e.currentTarget.getBoundingClientRect();
       const x = e.clientX - rect.left;
       if (playerRef.current) {
