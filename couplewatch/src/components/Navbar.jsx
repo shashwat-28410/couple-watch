@@ -35,7 +35,7 @@ export default function Navbar({ user }) {
               <span className="text-white font-medium">{getFirstName(user.email)}</span>
               <button 
                 onClick={() => supabase.auth.signOut().then(() => window.location.reload())}
-                className="text-[#9090A8] text-sm font-bold hover:text-white transition ml-4"
+                className="text-[#9090A8] text-[10px] font-black uppercase tracking-widest hover:text-rose-500 transition ml-4"
               >
                 Log out
               </button>

@@ -10,6 +10,8 @@ export default function ProtectedLayout() {
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showAuth, setShowAuth] = useState(false);
+  const [initialTab, setInitialTab] = useState("login");
+  const [isRecovering, setIsRecovering] = useState(false);
   const [critError, setCritError] = useState(null);
 
   // 🔐 Load session + listen for auth changes
@@ -23,8 +25,13 @@ export default function ProtectedLayout() {
       init();
 
       const { data: listener } = supabase.auth.onAuthStateChange(
-        (_event, newSession) => {
+        (event, newSession) => {
           setSession(newSession);
+          if (event === "PASSWORD_RECOVERY") {
+            setIsRecovering(true);
+            setInitialTab("reset");
+            setShowAuth(true);
+          }
         }
       );
 
@@ -40,6 +47,9 @@ export default function ProtectedLayout() {
       try {
         if (!session?.user) {
           setShowAuth(true);
+        } else if (isRecovering) {
+          // Keep modal open for password reset
+          setShowAuth(true);
         } else {
           setShowAuth(false);
         }
@@ -52,7 +62,7 @@ export default function ProtectedLayout() {
     };
 
     checkAuth();
-  }, [session]);
+  }, [session, isRecovering]);
 
   if (critError) {
     return (
@@ -83,7 +93,11 @@ export default function ProtectedLayout() {
   return (
     <>
       <Outlet />
-      <AuthModal isOpen={showAuth} onClose={() => setShowAuth(false)} />
+      <AuthModal 
+        isOpen={showAuth} 
+        onClose={() => setShowAuth(false)} 
+        initialTab={initialTab} 
+      />
     </>
   );
 }
