@@ -20,6 +20,8 @@ export default function Room() {
   const [videoUrlInput, setVideoUrlInput] = useState("");
   const [videoError, setVideoError] = useState(null);
   const [videoLoading, setVideoLoading] = useState(false);
+  const [videoDuration, setVideoDuration] = useState(0);
+  const [currentTime, setCurrentTime] = useState(0);
   const [hasInteracted, setHasInteracted] = useState(false);
   const [showControls, setShowControls] = useState(false);
   const [seekFeedback, setSeekFeedback] = useState(null);
@@ -133,7 +135,7 @@ export default function Room() {
       }
     } else if (type === "candidate") {
       if (peerConnectionRef.current && peerConnectionRef.current.remoteDescription) {
-        try { await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate)); } catch (e) {}
+        try { await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(candidate)); } catch (err) { console.error("ICE Candidate Error:", err); }
       } else iceCandidatesQueue.current.push(candidate);
     } else if (type === "hangup") endCall(false);
   };
@@ -171,14 +173,18 @@ export default function Room() {
     if (!room?.id || !playerRef.current) return;
     try {
       setHasInteracted(true);
-      if (channelRef.current && connectionStatus === "SUBSCRIBED") channelRef.current.send({ type: "broadcast", event: "request-sync", payload: {} });
+      // Send request for live sync from host
+      if (channelRef.current && connectionStatus === "SUBSCRIBED") {
+        channelRef.current.send({ type: "broadcast", event: "request-sync", payload: {} });
+      }
+      // Immediate fallback to DB state while waiting for broadcast
       const { data } = await supabase.from("room_state").select("*").eq("room_id", room.id).single();
       if (data) {
         setRoomState(data);
         playerRef.current.currentTime = data.current_timestamp_seconds;
         if (data.is_playing) playerRef.current.play().catch(() => {}); else playerRef.current.pause();
       }
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error("Force Sync Error:", err); }
   };
 
   useEffect(() => {
@@ -213,7 +219,7 @@ export default function Room() {
         setIsHost(hostStatus); isHostRef.current = hostStatus;
         if (messagesRes.data) setMessages(messagesRes.data);
         setIsInitializing(false);
-      } catch (err) { navigate("/", { replace: true }); }
+      } catch (err) { console.error("Init Room Error:", err); navigate("/", { replace: true }); }
     }
     initRoom();
   }, [code, navigate]);
@@ -240,11 +246,16 @@ export default function Room() {
           })
           .on("broadcast", { event: "chat-msg" }, ({ payload }) => setMessages(current => current.some(x => x.id === payload.id) ? current : [...current, payload]))
           .on("broadcast", { event: "webrtc-signal" }, ({ payload }) => handleWebRTCSignal(payload))
-          .on("broadcast", { event: "sync-event" }, ({ payload }) => setRoomState(payload))
+          .on("broadcast", { event: "sync-event" }, ({ payload }) => {
+            setRoomState(payload);
+            if (payload.force && playerRef.current && !isHostRef.current) {
+              playerRef.current.currentTime = payload.current_timestamp_seconds;
+            }
+          })
           .on("broadcast", { event: "floating-reaction" }, ({ payload }) => triggerReaction(payload.emoji))
           .on("broadcast", { event: "request-sync" }, () => {
             if (isHostRef.current && playerRef.current && channelRef.current) {
-              channelRef.current.send({ type: "broadcast", event: "sync-event", payload: { ...roomStateRef.current, current_timestamp_seconds: playerRef.current.currentTime } });
+              channelRef.current.send({ type: "broadcast", event: "sync-event", payload: { ...roomStateRef.current, current_timestamp_seconds: playerRef.current.currentTime, force: true } });
             }
           })
           .on("presence", { event: "sync" }, () => {
@@ -266,7 +277,7 @@ export default function Room() {
               reconnectTimeout = setTimeout(setupChannel, 3000);
             }
           });
-      } catch (err) { isReconnectingRef.current = false; }
+      } catch (err) { console.error("Setup Channel Error:", err); isReconnectingRef.current = false; }
     };
     setupChannel();
 
@@ -303,7 +314,7 @@ export default function Room() {
         else playerRef.current.playbackRate = 1.0;
       } else playerRef.current.playbackRate = 1.0;
     }
-  }, [roomState?.is_playing, roomState?.current_timestamp_seconds, hasInteracted, isHost]);
+  }, [roomState?.is_playing, roomState?.current_timestamp_seconds, roomState?.video_url, hasInteracted, isHost]);
 
   useEffect(() => {
     if (!isHost || !roomState?.is_playing || connectionStatus !== "SUBSCRIBED") return;
@@ -369,12 +380,12 @@ export default function Room() {
     }
   };
 
-  async function updateRoomState(newValues) {
+  async function updateRoomState(newValues, forceJump = false) {
     if (!isHost || !room) return;
     setRoomState(prev => {
       const compensatedValues = { ...prev, ...newValues };
       if (channelRef.current && connectionStatus === "SUBSCRIBED") {
-        channelRef.current.send({ type: "broadcast", event: "sync-event", payload: compensatedValues });
+        channelRef.current.send({ type: "broadcast", event: "sync-event", payload: { ...compensatedValues, force: forceJump } });
       }
       return compensatedValues;
     });
@@ -458,12 +469,14 @@ export default function Room() {
                     <div key={r.id} className="float-reaction" style={{ left: `${r.left}%`, bottom: '20px' }}>{r.emoji}</div>
                   ))}
                   {roomState?.video_url ? (
-                    <video key={roomState.video_url} ref={playerRef} src={roomState.video_url} className="absolute inset-0 w-full h-full object-contain" playsInline
-                      onLoadedMetadata={() => setVideoLoading(false)} onWaiting={() => setVideoLoading(true)} onPlaying={() => setVideoLoading(false)}
+                    <video ref={playerRef} src={roomState.video_url} className="absolute inset-0 w-full h-full object-contain" playsInline
+                      onLoadedMetadata={(e) => { setVideoLoading(false); setVideoDuration(e.target.duration); }} 
+                      onTimeUpdate={(e) => setCurrentTime(e.target.currentTime)}
+                      onWaiting={() => setVideoLoading(true)} onPlaying={() => setVideoLoading(false)}
                       onPlay={() => isHost && updateRoomState({ is_playing: true, current_timestamp_seconds: playerRef.current?.currentTime || 0 })}
                       onPause={() => isHost && updateRoomState({ is_playing: false, current_timestamp_seconds: playerRef.current?.currentTime || 0 })}
-                      onSeeked={() => isHost && updateRoomState({ current_timestamp_seconds: playerRef.current?.currentTime || 0 })}
-                      onEnded={() => { if (isHost) updateRoomState({ is_playing: false, current_timestamp_seconds: 0 }); }}
+                      onSeeked={() => isHost && updateRoomState({ current_timestamp_seconds: playerRef.current?.currentTime || 0 }, true)}
+                      onEnded={() => { if (isHost) updateRoomState({ is_playing: false, current_timestamp_seconds: 0 }, true); }}
                       onError={() => { setVideoError("Playback failed. Ensure it's a direct MP4 URL."); setVideoLoading(false); }}
                     />
                   ) : ( <div className="w-full h-full bg-black flex items-center justify-center opacity-20"><span className="text-6xl">🎬</span></div> )}
@@ -476,11 +489,23 @@ export default function Room() {
                     </div>
                   )}
                   {isHost && hasInteracted && roomState?.video_url && showControls && (
-                    <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/40">
-                      <div className="flex items-center gap-12 md:gap-20">
-                        <button onClick={(e) => { e.stopPropagation(); if (playerRef.current) { playerRef.current.currentTime = Math.max(0, playerRef.current.currentTime - 5); updateRoomState({ current_timestamp_seconds: playerRef.current.currentTime }); } }} className="w-16 h-16 rounded-full border-2 border-white/20 flex items-center justify-center text-white/90 hover:bg-white/10 active:scale-90 transition-all"><span className="text-sm font-black">-5s</span></button>
+                    <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/40">
+                      <div className="flex items-center gap-12 md:gap-20 mb-8">
+                        <button onClick={(e) => { e.stopPropagation(); if (playerRef.current) { playerRef.current.currentTime = Math.max(0, playerRef.current.currentTime - 5); updateRoomState({ current_timestamp_seconds: playerRef.current.currentTime }, true); } }} className="w-16 h-16 rounded-full border-2 border-white/20 flex items-center justify-center text-white/90 hover:bg-white/10 active:scale-90 transition-all"><span className="text-sm font-black">-5s</span></button>
                         <button onClick={(e) => { e.stopPropagation(); if (roomState.is_playing) updateRoomState({ is_playing: false, current_timestamp_seconds: playerRef.current?.currentTime || 0 }); else updateRoomState({ is_playing: true, current_timestamp_seconds: playerRef.current?.currentTime || 0 }); }} className="w-24 h-24 rounded-full border-2 border-white/30 flex items-center justify-center text-white/90 hover:bg-white/10 active:scale-90 transition-all">{roomState.is_playing ? <svg className="w-12 h-12" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg> : <svg className="w-12 h-12 ml-2" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>}</button>
-                        <button onClick={(e) => { e.stopPropagation(); if (playerRef.current) { playerRef.current.currentTime = Math.min(playerRef.current.duration, playerRef.current.currentTime + 5); updateRoomState({ current_timestamp_seconds: playerRef.current.currentTime }); } }} className="w-16 h-16 rounded-full border-2 border-white/20 flex items-center justify-center text-white/90 hover:bg-white/10 active:scale-90 transition-all"><span className="text-sm font-black">+5s</span></button>
+                        <button onClick={(e) => { e.stopPropagation(); if (playerRef.current) { playerRef.current.currentTime = Math.min(playerRef.current.duration, playerRef.current.currentTime + 5); updateRoomState({ current_timestamp_seconds: playerRef.current.currentTime }, true); } }} className="w-16 h-16 rounded-full border-2 border-white/20 flex items-center justify-center text-white/90 hover:bg-white/10 active:scale-90 transition-all"><span className="text-sm font-black">+5s</span></button>
+                      </div>
+                      <div className="w-full px-10 flex flex-col items-center gap-2" onClick={(e) => e.stopPropagation()}>
+                        <input type="range" min="0" max={videoDuration || 100} value={currentTime} onChange={(e) => {
+                            const newTime = parseFloat(e.target.value);
+                            setCurrentTime(newTime);
+                            if (playerRef.current) playerRef.current.currentTime = newTime;
+                            updateRoomState({ current_timestamp_seconds: newTime }, true);
+                          }} className="w-full h-1.5 bg-white/20 rounded-lg appearance-none cursor-pointer accent-[#881337] transition-all" />
+                        <div className="w-full flex justify-between text-[10px] font-black text-white/60 uppercase tracking-widest">
+                          <span>{new Date(currentTime * 1000).toISOString().substr(11, 8)}</span>
+                          <span>{new Date(videoDuration * 1000).toISOString().substr(11, 8)}</span>
+                        </div>
                       </div>
                     </div>
                   )}
