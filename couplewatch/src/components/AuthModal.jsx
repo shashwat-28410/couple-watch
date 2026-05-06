@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabaseClient";
 export default function AuthModal({ isOpen, onClose, initialTab = "login" }) {
   const [tab, setTab] = useState(initialTab); // login | signup | forgot | reset
   const [email, setEmail] = useState("");
+  const [fullName, setFullName] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -39,12 +40,24 @@ export default function AuthModal({ isOpen, onClose, initialTab = "login" }) {
 
     try {
       if (tab === "signup") {
-        const { data, error } = await supabase.auth.signUp({ email, password });
+        const { data, error } = await supabase.auth.signUp({ 
+          email, 
+          password,
+          options: {
+            data: {
+              full_name: fullName
+            }
+          }
+        });
         if (error) throw error;
         const user = data?.user;
         if (!user) throw new Error("User not returned");
 
-        await supabase.from("profiles").insert([{ id: user.id, email: user.email }]);
+        await supabase.from("profiles").insert([{ 
+          id: user.id, 
+          email: user.email, 
+          full_name: fullName
+        }]);
         setMsg("✅ Account created! Check your email to confirm.");
       } else if (tab === "login") {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -104,6 +117,17 @@ export default function AuthModal({ isOpen, onClose, initialTab = "login" }) {
         )}
 
         <form onSubmit={handleAuth} className="space-y-6">
+          {tab === "signup" && (
+            <div>
+              <label className="text-[10px] font-black uppercase tracking-[0.2em] text-[#9090A8] mb-3 block">Full Name</label>
+              <input 
+                type="text" required value={fullName} onChange={e => setFullName(e.target.value)}
+                className="romantic-input w-full"
+                placeholder="Your Full Name"
+              />
+            </div>
+          )}
+          
           {tab !== "reset" && (
             <div>
               <label className="text-[10px] font-black uppercase tracking-[0.2em] text-[#9090A8] mb-3 block">Email Address</label>

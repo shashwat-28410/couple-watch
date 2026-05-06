@@ -35,6 +35,7 @@ export default function Room() {
   const [localStream, setLocalStream] = useState(null);
   const [isInitializing, setIsInitializing] = useState(true);
   const [floatingReactions, setFloatingReactions] = useState([]);
+  const [profile, setProfile] = useState(null);
 
   // Refs
   const playerRef = useRef(null);
@@ -193,6 +194,8 @@ export default function Room() {
         const { data: { user: authUser } } = await supabase.auth.getUser();
         if (!authUser) { navigate("/", { replace: true }); return; }
         setUser(authUser);
+        const { data: prof } = await supabase.from("profiles").select("full_name").eq("id", authUser.id).single();
+        if (prof) setProfile(prof);
         const { data: roomData } = await supabase.from("rooms").select("*").eq("room_code", code).single();
         if (!roomData) { navigate("/", { replace: true }); return; }
         setRoom(roomData);
@@ -202,8 +205,8 @@ export default function Room() {
         }
         const [stateRes, membersRes, messagesRes] = await Promise.all([
           supabase.from("room_state").select("*").eq("room_id", roomData.id).maybeSingle(),
-          supabase.from("room_members").select("id, role, user_id, profiles(email)").eq("room_id", roomData.id),
-          supabase.from("messages").select("id, content, created_at, user_id, profiles(email)").eq("room_id", roomData.id).order("created_at", { ascending: true }).limit(50)
+          supabase.from("room_members").select("id, role, user_id, profiles(full_name)").eq("room_id", roomData.id),
+          supabase.from("messages").select("id, content, created_at, user_id, profiles(full_name)").eq("room_id", roomData.id).order("created_at", { ascending: true }).limit(50)
         ]);
         if (stateRes.data) {
           setRoomState(stateRes.data);
@@ -239,8 +242,8 @@ export default function Room() {
         subChannel
           .on("postgres_changes", { event: "UPDATE", schema: "public", table: "room_state", filter: `room_id=eq.${room.id}` }, (p) => setRoomState(prev => ({ ...prev, ...p.new })))
           .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `room_id=eq.${room.id}` }, async (payload) => {
-            setMessages(current => current.some(m => m.id === payload.new.id) ? current : [...current, { ...payload.new, profiles: { email: "Partner" } }]);
-            supabase.from("profiles").select("email").eq("id", payload.new.user_id).single().then(({ data }) => {
+            setMessages(current => current.some(m => m.id === payload.new.id) ? current : [...current, { ...payload.new, profiles: { full_name: "Partner" } }]);
+            supabase.from("profiles").select("full_name").eq("id", payload.new.user_id).single().then(({ data }) => {
               if (data) setMessages(c => c.map(m => m.id === payload.new.id ? { ...m, profiles: data } : m));
             });
           })
@@ -265,13 +268,20 @@ export default function Room() {
             Object.keys(state).forEach(key => {
               if (key === user.id) return;
               const presenceEntries = state[key];
-              if (presenceEntries?.some(p => p.is_typing)) typing.push(presenceEntries[0].email?.split('@')[0] || "Partner");
+              if (presenceEntries?.some(p => p.is_typing)) typing.push(presenceEntries[0].full_name || "Partner");
             });
             setTypingUsers(typing);
           })
           .subscribe(async (status) => {
             setConnectionStatus(status); isReconnectingRef.current = false;
-            if (status === "SUBSCRIBED") await subChannel.track({ online_at: new Date().toISOString(), is_typing: false, email: user.email });
+            if (status === "SUBSCRIBED") {
+              const { data: prof } = await supabase.from("profiles").select("full_name").eq("id", user.id).single();
+              await subChannel.track({ 
+                online_at: new Date().toISOString(), 
+                is_typing: false, 
+                full_name: prof?.full_name || user.email?.split('@')[0]
+              });
+            }
             if (status === "TIMED_OUT" || status === "CLOSED" || status === "CHANNEL_ERROR") {
               if (reconnectTimeout) clearTimeout(reconnectTimeout);
               reconnectTimeout = setTimeout(setupChannel, 3000);
@@ -331,16 +341,28 @@ export default function Room() {
     return () => { clearInterval(syncInterval); clearInterval(dbInterval); };
   }, [isHost, roomState?.is_playing, connectionStatus, room?.id]);
 
-  const handleTyping = () => {
+  const handleTyping = async () => {
     if (!channelRef.current || !user || connectionStatus !== "SUBSCRIBED") return;
     if (!isTypingRef.current) {
       isTypingRef.current = true;
-      channelRef.current.track({ online_at: new Date().toISOString(), is_typing: true, email: user.email });
+      const { data: prof } = await supabase.from("profiles").select("full_name").eq("id", user.id).single();
+      channelRef.current.track({ 
+        online_at: new Date().toISOString(), 
+        is_typing: true, 
+        full_name: prof?.full_name || user.email?.split('@')[0]
+      });
     }
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
-    typingTimeoutRef.current = setTimeout(() => {
+    typingTimeoutRef.current = setTimeout(async () => {
       isTypingRef.current = false;
-      if (channelRef.current) channelRef.current.track({ online_at: new Date().toISOString(), is_typing: false, email: user.email });
+      if (channelRef.current) {
+        const { data: prof } = await supabase.from("profiles").select("full_name").eq("id", user.id).single();
+        channelRef.current.track({ 
+          online_at: new Date().toISOString(), 
+          is_typing: false, 
+          full_name: prof?.full_name || user.email?.split('@')[0]
+        });
+      }
     }, 3000);
   };
 
@@ -374,7 +396,8 @@ export default function Room() {
     const content = newMessage.trim(); setNewMessage("");
     const { data } = await supabase.from("messages").insert([{ room_id: room.id, user_id: user.id, content }]).select().single();
     if (data) {
-      const fullMsg = { ...data, profiles: { email: user.email } };
+      const { data: prof } = await supabase.from("profiles").select("full_name").eq("id", user.id).single();
+      const fullMsg = { ...data, profiles: prof || { full_name: user.email?.split('@')[0] } };
       setMessages(current => [...current, fullMsg]);
       if (channelRef.current && connectionStatus === "SUBSCRIBED") channelRef.current.send({ type: "broadcast", event: "chat-msg", payload: fullMsg });
     }
@@ -543,10 +566,12 @@ export default function Room() {
                     <div key={member.id} className="flex items-center justify-between group px-1">
                       <div className="flex items-center gap-4">
                         <div className="relative">
-                          <div className="w-11 h-11 rounded-full bg-gradient-to-br from-white/10 to-transparent border border-white/10 flex items-center justify-center text-[11px] font-bold text-white shadow-xl group-hover:border-[#881337]/30 transition-all uppercase">{member.profiles?.email?.[0] || "?"}</div>
+                          <div className="w-11 h-11 rounded-full bg-gradient-to-br from-white/10 to-transparent border border-white/10 flex items-center justify-center text-[11px] font-bold text-white shadow-xl group-hover:border-[#881337]/30 transition-all uppercase">
+                            {(member.profiles?.full_name || "P")[0]}
+                          </div>
                           {onlineUsers.includes(member.user_id) && <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-[3px] border-[#0A0A0F] shadow-[0_0_10px_rgba(34,197,94,0.8)]"></div>}
                         </div>
-                        <div className="flex flex-col gap-0.5"><span className="text-[13px] font-bold text-white/90 truncate max-w-[140px] tracking-tight">{member.profiles?.email?.split('@')[0]}</span><span className="text-[9px] font-bold text-[#55556A] uppercase tracking-widest">{member.role === 'host' ? 'Master of Sync' : 'Partner'}</span></div>
+                        <div className="flex flex-col gap-0.5"><span className="text-[13px] font-bold text-white/90 truncate max-w-[140px] tracking-tight">{member.profiles?.full_name || "Partner"}</span><span className="text-[9px] font-bold text-[#55556A] uppercase tracking-widest">{member.role === 'host' ? 'Master of Sync' : 'Partner'}</span></div>
                       </div>
                       {member.role === 'host' ? <div className="px-3 py-1.5 rounded-full bg-[#881337]/10 border border-[#881337]/30 flex items-center gap-2 shadow-[0_0_15px_rgba(136,197,55,0.1)]"><span className="text-[9px] font-black uppercase text-[#BE123C] tracking-widest">Host</span><span className="text-xs">👑</span></div> : <div className="px-3 py-1.5 rounded-full bg-white/5 border border-white/5"><span className="text-[9px] font-black uppercase text-[#55556A] tracking-widest">Member</span></div>}
                     </div>
@@ -575,17 +600,17 @@ export default function Room() {
                   <div className="flex flex-col items-center justify-center p-8 w-full animate-in fade-in duration-500">
                     <div className="flex items-center gap-12 mb-10">
                       <div className="flex flex-col items-center gap-4">
-                        <div className={`w-24 h-24 rounded-full border-2 p-1.5 transition-all duration-500 ${!isAudioMuted ? "border-[#BE123C] shadow-[0_0_30px_rgba(190,18,60,0.3)]" : "border-white/10"}`}><div className="w-full h-full rounded-full bg-[#1A1A1F] flex items-center justify-center text-2xl font-bold uppercase text-white/80">You</div></div>
+                        <div className={`w-24 h-24 rounded-full border-2 p-1.5 transition-all duration-500 ${!isAudioMuted ? "border-[#BE123C] shadow-[0_0_30px_rgba(190,18,60,0.3)]" : "border-white/10"}`}><div className="w-full h-full rounded-full bg-[#1A1A1F] flex items-center justify-center text-2xl font-bold uppercase text-white/80">{(profile?.full_name || user.email?.split('@')[0] || "Y")[0]}</div></div>
                         <div className="flex flex-col items-center gap-2">
                           <div className="flex gap-1 h-3 items-end"><div className={`w-1 rounded-full transition-all ${!isAudioMuted ? "bg-[#BE123C] animate-[bounce_0.6s_infinite] shadow-[0_0_8px_#BE123C]" : "bg-[#55556A]"}`}></div><div className={`w-1 rounded-full transition-all ${!isAudioMuted ? "bg-[#BE123C] animate-[bounce_0.8s_infinite] shadow-[0_0_8px_#BE123C] delay-75" : "bg-[#55556A]"}`}></div><div className={`w-1 rounded-full transition-all ${!isAudioMuted ? "bg-[#BE123C] animate-[bounce_0.7s_infinite] shadow-[0_0_8px_#BE123C] delay-150" : "bg-[#55556A]"}`}></div></div>
-                          <span className="text-[10px] font-black uppercase tracking-widest text-[#8B8B9A]">You</span>
+                          <span className="text-[10px] font-black uppercase tracking-widest text-[#8B8B9A]">{profile?.full_name || "You"}</span>
                         </div>
                       </div>
                       <div className="flex flex-col items-center gap-4">
-                        <div className={`w-24 h-24 rounded-full border-2 p-1.5 transition-all duration-500 ${callStatus === "CONNECTED" ? "border-[#881337] shadow-[0_0_30px_rgba(136,19,55,0.3)]" : "border-white/10 animate-pulse"}`}><div className="w-full h-full rounded-full bg-[#1A1A1F] flex items-center justify-center text-2xl font-bold uppercase text-[#BE123C]">P</div></div>
+                        <div className={`w-24 h-24 rounded-full border-2 p-1.5 transition-all duration-500 ${callStatus === "CONNECTED" ? "border-[#881337] shadow-[0_0_30px_rgba(136,19,55,0.3)]" : "border-white/10 animate-pulse"}`}><div className="w-full h-full rounded-full bg-[#1A1A1F] flex items-center justify-center text-2xl font-bold uppercase text-[#BE123C]">{(members.find(m => m.user_id !== user.id)?.profiles?.full_name || "P")[0]}</div></div>
                         <div className="flex flex-col items-center gap-2">
                           <div className="flex gap-1 h-3 items-end"><div className={`w-1 rounded-full transition-all ${callStatus === "CONNECTED" ? "bg-[#881337] animate-[bounce_0.6s_infinite] shadow-[0_0_8px_#881337]" : "bg-[#55556A]"}`}></div><div className={`w-1 rounded-full transition-all ${callStatus === "CONNECTED" ? "bg-[#881337] animate-[bounce_0.8s_infinite] shadow-[0_0_8px_#881337] delay-75" : "bg-[#55556A]"}`}></div><div className={`w-1 rounded-full transition-all ${callStatus === "CONNECTED" ? "bg-[#881337] animate-[bounce_0.7s_infinite] shadow-[0_0_8px_#881337] delay-150" : "bg-[#55556A]"}`}></div></div>
-                          <span className="text-[10px] font-black uppercase tracking-widest text-[#8B8B9A]">Partner</span>
+                          <span className="text-[10px] font-black uppercase tracking-widest text-[#8B8B9A]">{members.find(m => m.user_id !== user.id)?.profiles?.full_name || "Partner"}</span>
                         </div>
                       </div>
                     </div>
@@ -600,12 +625,12 @@ export default function Room() {
                       <div className="flex-1 rounded-[18px] bg-black border border-white/5 overflow-hidden relative shadow-2xl">
                         <video ref={remoteVideoRef} autoPlay playsInline className={`w-full h-full object-cover transition-opacity duration-700 ${callStatus === "CONNECTED" ? 'opacity-100' : 'opacity-0'}`} />
                         {callStatus !== "CONNECTED" && (<div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0D0D12]"><div className="w-10 h-10 border-2 border-[#881337]/20 border-t-[#BE123C] rounded-full animate-spin mb-3"></div><span className="text-[8px] font-black uppercase tracking-widest text-[#881337]/60">Connecting...</span></div>)}
-                        <div className="absolute top-3 left-3 px-2 py-1 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center gap-1.5 z-20"><div className={`w-1 h-1 rounded-full ${callStatus === "CONNECTED" ? "bg-green-500" : "bg-yellow-500 animate-pulse"}`}></div><span className="text-[7px] font-black uppercase text-white tracking-widest">Partner</span></div>
+                        <div className="absolute top-3 left-3 px-2 py-1 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center gap-1.5 z-20"><div className={`w-1 h-1 rounded-full ${callStatus === "CONNECTED" ? "bg-green-500" : "bg-yellow-500 animate-pulse"}`}></div><span className="text-[7px] font-black uppercase text-white tracking-widest">{members.find(m => m.user_id !== user.id)?.profiles?.full_name || "Partner"}</span></div>
                       </div>
                       <div className="flex-1 rounded-[18px] bg-black border border-[#BE123C]/20 overflow-hidden relative shadow-2xl transition-all">
                         <video ref={localVideoRef} autoPlay playsInline muted className={`w-full h-full object-cover scale-x-[-1] transition-opacity duration-700 ${!isVideoEnabled ? 'opacity-0' : 'opacity-100'}`} />
                         {!isVideoEnabled && <div className="absolute inset-0 flex items-center justify-center bg-[#0D0D12]"><span className="text-[8px] font-black uppercase text-white/30 tracking-widest">Camera Off</span></div>}
-                        <div className="absolute top-3 left-3 px-2 py-1 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center gap-1.5 z-20"><div className="w-1 h-1 rounded-full bg-green-500"></div><span className="text-[7px] font-black uppercase text-white tracking-widest">You</span></div>
+                        <div className="absolute top-3 left-3 px-2 py-1 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center gap-1.5 z-20"><div className="w-1 h-1 rounded-full bg-green-500"></div><span className="text-[7px] font-black uppercase text-white tracking-widest">{profile?.full_name || "You"}</span></div>
                       </div>
                     </div>
                     <div className="flex items-center justify-center gap-4 mt-4 py-2">

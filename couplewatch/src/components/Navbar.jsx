@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import AuthModal from "./AuthModal";
@@ -7,14 +7,28 @@ export default function Navbar({ user }) {
   const navigate = useNavigate();
   const [showAuth, setShowAuth] = useState(false);
   const [authTab, setAuthTab] = useState("login");
+  const [profile, setProfile] = useState(null);
+
+  useEffect(() => {
+    if (user) {
+      supabase
+        .from("profiles")
+        .select("full_name, avatar")
+        .eq("id", user.id)
+        .single()
+        .then(({ data }) => {
+          if (data) setProfile(data);
+        });
+    }
+  }, [user]);
 
   const handleAuth = (tab) => {
     setAuthTab(tab);
     setShowAuth(true);
   };
 
-  const getFirstName = (email) => email ? email.split('@')[0].charAt(0).toUpperCase() + email.split('@')[0].slice(1) : "User";
-  const getInitial = (email) => email ? email.charAt(0).toUpperCase() : "U";
+  const displayName = profile?.full_name || user?.email?.split('@')[0] || "User";
+  const displayInitial = displayName.charAt(0).toUpperCase();
 
   return (
     <>
@@ -30,9 +44,9 @@ export default function Navbar({ user }) {
           {user ? (
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-primary-gradient flex items-center justify-center text-white font-bold shadow-lg shadow-purple-500/20">
-                {getInitial(user.email)}
+                {displayInitial}
               </div>
-              <span className="text-white font-medium">{getFirstName(user.email)}</span>
+              <span className="text-white font-bold tracking-tight">{displayName}</span>
               <button 
                 onClick={() => supabase.auth.signOut().then(() => window.location.reload())}
                 className="text-[#9090A8] text-[10px] font-black uppercase tracking-widest hover:text-rose-500 transition ml-4"

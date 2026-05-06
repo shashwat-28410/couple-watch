@@ -25,9 +25,25 @@ const FloatingHearts = () => {
   );
 };
 
+const IconHeart = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+);
+
+const IconSync = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>
+);
+
+const IconVideo = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m22 8-6 4 6 4V8Z"/><rect width="14" height="12" x="2" y="6" rx="2" ry="2"/></svg>
+);
+
+const IconChat = () => (
+  <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/></svg>
+);
+
 const ModeCard = ({ title, description, icon }) => (
   <div className="romantic-card max-w-[380px] mx-auto flex flex-col items-center text-center transition-all duration-500 hover:bg-white/[0.04] border-white/5 group">
-    <div className="w-20 h-20 rounded-full bg-primary-gradient flex items-center justify-center text-4xl mb-7 group-hover:scale-105 transition-transform text-white">
+    <div className="w-20 h-20 rounded-full bg-primary-gradient flex items-center justify-center mb-7 group-hover:scale-105 transition-transform text-white">
       {icon}
     </div>
     <h3 className="text-2xl font-bold mb-4">{title}</h3>
@@ -37,7 +53,7 @@ const ModeCard = ({ title, description, icon }) => (
 
 const FeatureCard = ({ title, description, icon, highlight }) => (
   <div className="romantic-card flex-1 flex flex-col items-center text-center border-white/5">
-    <div className="w-14 h-14 rounded-full bg-primary-gradient flex items-center justify-center text-2xl mb-6 text-white">
+    <div className="w-14 h-14 rounded-full bg-primary-gradient flex items-center justify-center mb-6 text-white">
       {icon}
     </div>
     <h3 className="text-xl font-bold mb-3">
@@ -131,7 +147,7 @@ export default function Home() {
           <p className="max-w-2xl text-[#8B8B9A] text-[17px] mb-14 leading-[1.8]">Experience movies in perfect sync with your partner, no matter the distance. Feel close, share emotions, and create memories ❤️</p>
 
           <div className="w-full mb-16 flex justify-center">
-            <ModeCard title="Couples mode" icon="♡" description="Synchronized playback and intimate chat for two lovers miles apart." />
+            <ModeCard title="Couples mode" icon={<IconHeart />} description="Synchronized playback, video call and intimate chat for two lovers miles apart." />
           </div>
 
           <div className="flex flex-col md:flex-row gap-6 mb-20 items-center justify-center w-full">
@@ -147,9 +163,10 @@ export default function Home() {
 
       <section className="w-full max-w-6xl px-8 py-40">
         <h2 className="text-5xl md:text-6xl font-bold text-center mb-24"><span className="text-white">Perfect for</span> <br /><span className="text-primary-gradient">long distance love</span></h2>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-          <FeatureCard title="Synchronized" highlight="playback" icon="🔄" description="Our advanced sync engine ensures both partners are watching the exact same frame. Pause for one, and it pauses for both." />
-          <FeatureCard title="Real-time" highlight="chat" icon="💬" description="Whisper sweet nothings or debate the plot in our intimate chat window. Real-time typing indicators make it feel alive." />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <FeatureCard title="Synchronized" highlight="playback" icon={<IconSync />} description="Our advanced sync engine ensures both partners are watching the exact same frame. Pause for one, and it pauses for both." />
+          <FeatureCard title="Video" highlight="call" icon={<IconVideo />} description="See your partner's reactions in real-time. Share every laugh and tear as if you were sitting right next to each other." />
+          <FeatureCard title="Real-time" highlight="chat" icon={<IconChat />} description="Whisper sweet nothings or debate the plot in our intimate chat window. Real-time typing indicators make it feel alive." />
         </div>
       </section>
 
