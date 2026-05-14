@@ -1,12 +1,9 @@
 import { useEffect, useState } from "react";
-import { Outlet, useNavigate, useLocation } from "react-router-dom";
+import { Outlet } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import AuthModal from "../components/AuthModal";
 
 export default function ProtectedLayout() {
-  const navigate = useNavigate();
-  const location = useLocation();
-
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [showAuth, setShowAuth] = useState(false);

@@ -4,17 +4,13 @@ import { supabase } from "../lib/supabaseClient";
 import Navbar from "../components/Navbar";
 
 const FloatingHearts = () => {
-  const [hearts, setHearts] = useState([]);
-  useEffect(() => {
-    const newHearts = Array.from({ length: 15 }).map((_, i) => ({
-      id: i,
-      left: Math.random() * 100 + "%",
-      delay: Math.random() * 15 + "s",
-      duration: 10 + Math.random() * 10 + "s",
-      size: 10 + Math.random() * 20 + "px"
-    }));
-    setHearts(newHearts);
-  }, []);
+  const [hearts] = useState(() => Array.from({ length: 15 }).map((_, i) => ({
+    id: i,
+    left: Math.random() * 100 + "%",
+    delay: Math.random() * 15 + "s",
+    duration: 10 + Math.random() * 10 + "s",
+    size: 10 + Math.random() * 20 + "px"
+  })));
 
   return (
     <div className="absolute inset-0 overflow-hidden pointer-events-none">
@@ -151,10 +147,10 @@ export default function Home() {
           </div>
 
           <div className="flex flex-col md:flex-row gap-6 mb-20 items-center justify-center w-full">
-            <button onClick={handleStartWatching} className="pill-button bg-primary-gradient px-12 h-[56px] text-white">Start watching now</button>
+            <button onClick={handleStartWatching} disabled={loading} className="pill-button bg-primary-gradient px-12 h-[56px] text-white disabled:opacity-50">Start watching now</button>
             <div className="flex gap-3 h-[56px]">
               <input className="romantic-input w-52 h-full text-center tracking-widest placeholder:text-[#55556A]" placeholder="ROOM CODE" value={roomCodeInput} onChange={e => setRoomCodeInput(e.target.value.toUpperCase())} />
-              <button onClick={handleJoinRoom} className="px-12 py-3 rounded-full border border-white/10 font-bold hover:bg-white/5 transition h-full text-white/80">Join</button>
+              <button onClick={handleJoinRoom} disabled={loading} className="px-12 py-3 rounded-full border border-white/10 font-bold hover:bg-white/5 transition h-full text-white/80 disabled:opacity-50">Join</button>
             </div>
           </div>
           {errorMsg && <p className="mb-10 text-rose-400 font-medium">{errorMsg}</p>}
