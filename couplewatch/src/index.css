@@ -115,3 +115,51 @@ body {
   margin-left: auto;
   margin-right: auto;
 }
+
+/* ─── Fullscreen Watch Mode ─── */
+.fullscreen-container:fullscreen,
+.fullscreen-container:-webkit-full-screen,
+.fullscreen-container:-moz-full-screen,
+.fullscreen-container:-ms-fullscreen {
+  background: #000;
+  border-radius: 0 !important;
+  border: none !important;
+  padding: 0 !important;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Video fills all available space inside the fullscreen card */
+.fullscreen-container:fullscreen .fs-video-wrapper,
+.fullscreen-container:-webkit-full-screen .fs-video-wrapper {
+  flex: 1;
+  aspect-ratio: unset;
+  height: 100%;
+}
+
+/* Floating chat overlay inside fullscreen */
+.fs-chat-overlay {
+  position: absolute;
+  top: 0;
+  right: 0;
+  height: 100%;
+  width: min(380px, 90vw);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  background: rgba(10, 10, 15, 0.92);
+  backdrop-filter: blur(20px);
+  border-left: 1px solid rgba(136, 19, 55, 0.2);
+  transform: translateX(100%);
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.fs-chat-overlay.fs-chat-open {
+  transform: translateX(0);
+}
+
+/* Cursor auto-hide in fullscreen */
+.fs-cursor-hidden {
+  cursor: none;
+}
+

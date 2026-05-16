@@ -117,6 +117,14 @@ export default function Home() {
         .maybeSingle();
 
       if (!existingMember) {
+        // Enforce 2-person limit — count current members before inserting
+        const { count } = await supabase
+          .from("room_members")
+          .select("*", { count: "exact", head: true })
+          .eq("room_id", room.id);
+
+        if (count >= 2) throw new Error("Room is full 💔 Only 2 people can watch together.");
+
         await supabase.from("room_members").insert([{ room_id: room.id, user_id: authUser.id, role: "member" }]);
       }
       

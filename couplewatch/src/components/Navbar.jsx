@@ -27,13 +27,14 @@ export default function Navbar({ user }) {
     setShowAuth(true);
   };
 
-  const displayName = profile?.full_name || user?.email?.split('@')[0] || "User";
+  const displayName = profile?.full_name || user?.email?.split("@")[0] || "User";
   const displayInitial = displayName.charAt(0).toUpperCase();
 
   return (
     <>
       <nav className="w-full h-24 flex items-center justify-between px-8 z-50">
-        <div 
+        {/* Brand */}
+        <div
           className="flex items-center gap-2 text-2xl font-black text-primary-gradient tracking-tighter cursor-pointer"
           onClick={() => navigate("/")}
         >
@@ -43,26 +44,37 @@ export default function Navbar({ user }) {
         <div className="flex items-center gap-6">
           {user ? (
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-primary-gradient flex items-center justify-center text-white font-bold shadow-lg shadow-purple-500/20">
+              {/* History link — only shown when logged in */}
+              <button
+                onClick={() => navigate("/history")}
+                className="text-[#9090A8] text-[10px] font-black uppercase tracking-widest hover:text-white transition-colors"
+              >
+                History
+              </button>
+
+              {/* Avatar */}
+              <div className="w-10 h-10 rounded-full bg-primary-gradient flex items-center justify-center text-white font-bold shadow-lg">
                 {displayInitial}
               </div>
               <span className="text-white font-bold tracking-tight">{displayName}</span>
-              <button 
+
+              {/* Logout */}
+              <button
                 onClick={() => supabase.auth.signOut().then(() => window.location.reload())}
-                className="text-[#9090A8] text-[10px] font-black uppercase tracking-widest hover:text-rose-500 transition ml-4"
+                className="text-[#9090A8] text-[10px] font-black uppercase tracking-widest hover:text-rose-500 transition ml-2"
               >
                 Log out
               </button>
             </div>
           ) : (
             <>
-              <button 
+              <button
                 onClick={() => handleAuth("login")}
                 className="text-white font-bold hover:text-purple-400 transition text-sm"
               >
                 Login
               </button>
-              <button 
+              <button
                 onClick={() => handleAuth("signup")}
                 className="pill-button bg-primary-gradient text-sm text-white px-6 py-2 shadow-lg shadow-purple-500/20"
               >

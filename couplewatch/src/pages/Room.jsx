@@ -1,7 +1,9 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import Navbar from "../components/Navbar";
+import Toast from "../components/Toast";
+import ConfirmModal from "../components/ConfirmModal";
 
 export default function Room() {
   const { code } = useParams();
@@ -18,6 +20,11 @@ export default function Room() {
   const [connectionStatus, setConnectionStatus] = useState("JOINING");
   const [isHost, setIsHost] = useState(false);
   const [videoUrlInput, setVideoUrlInput] = useState("");
+  const [isChangingVideo, setIsChangingVideo] = useState(false);
+  const [viewMode, setViewMode] = useState("fit"); // fit, fill
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [isDragging, setIsDragging] = useState(false);
   const [videoError, setVideoError] = useState(null);
   const [videoLoading, setVideoLoading] = useState(false);
   const [videoDuration, setVideoDuration] = useState(0);
@@ -37,6 +44,24 @@ export default function Room() {
   const [floatingReactions, setFloatingReactions] = useState([]);
   const [profile, setProfile] = useState(null);
 
+  // ── Feature 1: Fullscreen Watch Mode ──
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showFsChat, setShowFsChat] = useState(false);
+  const [fsCursorHidden, setFsCursorHidden] = useState(false);
+
+  // ── Feature 2: Host Transfer ──
+  const [showTransferModal, setShowTransferModal] = useState(false);
+  const [transferring, setTransferring] = useState(false);
+  const [toastMsg, setToastMsg] = useState(null);
+
+  // ── Feature 3: Invite Link ──
+  const [inviteCopied, setInviteCopied] = useState(false);
+
+  // ── Feature 4: Watch History ──
+  const watchHistoryIdRef = useRef(null);
+  const historyIntervalRef = useRef(null);
+  const watchStartTimeRef = useRef(null);
+
   // Refs
   const playerRef = useRef(null);
   const channelRef = useRef(null);
@@ -54,6 +79,11 @@ export default function Room() {
   const remoteAudioRef = useRef(null);
   const iceCandidatesQueue = useRef([]);
   const isReconnectingRef = useRef(false);
+  // Feature 1 refs
+  const fullscreenContainerRef = useRef(null);
+  const fsMouseTimerRef = useRef(null);
+  const inviteTimeoutRef = useRef(null);
+  const initialSeekDoneRef = useRef(false);
 
   // Sync refs with state
   useEffect(() => { roomStateRef.current = roomState; }, [roomState]);
@@ -188,6 +218,183 @@ export default function Room() {
     } catch (err) { console.error("Force Sync Error:", err); }
   };
 
+  // ─── Feature 1: Fullscreen ───────────────────────────────
+  const toggleFullscreen = useCallback(async () => {
+    const el = fullscreenContainerRef.current;
+    if (!el) return;
+    try {
+      if (!document.fullscreenElement) {
+        await el.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch (err) {
+      console.error("Fullscreen error:", err);
+    }
+  }, []);
+
+  // Listen for native fullscreen changes (e.g. user pressing ESC)
+  useEffect(() => {
+    const onFsChange = () => {
+      const inFs = !!document.fullscreenElement;
+      setIsFullscreen(inFs);
+      if (!inFs) {
+        setShowFsChat(false);
+        setFsCursorHidden(false);
+        if (fsMouseTimerRef.current) clearTimeout(fsMouseTimerRef.current);
+      }
+    };
+    document.addEventListener("fullscreenchange", onFsChange);
+    return () => document.removeEventListener("fullscreenchange", onFsChange);
+  }, []);
+
+  // Show controls on interaction and auto-hide after 3s if playing
+  const triggerInteraction = useCallback(() => {
+    setFsCursorHidden(false);
+    setShowControls(true);
+    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+    controlsTimeoutRef.current = setTimeout(() => setShowControls(false), 3500);
+    if (fsMouseTimerRef.current) clearTimeout(fsMouseTimerRef.current);
+    fsMouseTimerRef.current = setTimeout(() => setFsCursorHidden(true), 3500);
+  }, []);
+
+  // ─── Feature 2: Host Transfer ─────────────────────────────
+  /** Extract a readable title from a video URL (filename without extension). */
+  const extractVideoTitle = (url) => {
+    try {
+      const pathname = new URL(url).pathname;
+      const filename = pathname.split("/").pop() || "";
+      return decodeURIComponent(filename.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ")) || "Untitled Video";
+    } catch {
+      return "Untitled Video";
+    }
+  };
+
+  const handleTransferHost = async () => {
+    if (!room || !user || transferring) return;
+    const partner = members.find((m) => m.user_id !== user.id);
+    if (!partner) return;
+    setTransferring(true);
+    try {
+      // Update both members' roles in DB
+      await Promise.all([
+        supabase.from("room_members").update({ role: "member" }).eq("room_id", room.id).eq("user_id", user.id),
+        supabase.from("room_members").update({ role: "host" }).eq("room_id", room.id).eq("user_id", partner.user_id),
+        supabase.from("rooms").update({ host_id: partner.user_id }).eq("id", room.id),
+      ]);
+      // Broadcast role change so both clients update immediately
+      if (channelRef.current && connectionStatus === "SUBSCRIBED") {
+        channelRef.current.send({
+          type: "broadcast",
+          event: "host-transfer",
+          payload: { newHostId: partner.user_id, oldHostId: user.id },
+        });
+      }
+      // Update local state
+      setIsHost(false);
+      isHostRef.current = false;
+      setMembers((prev) =>
+        prev.map((m) => ({ ...m, role: m.user_id === partner.user_id ? "host" : "member" }))
+      );
+      setToastMsg("🔄 Host transferred to your partner");
+    } catch (err) {
+      console.error("Transfer host error:", err);
+      setToastMsg("❌ Transfer failed. Try again.");
+    } finally {
+      setTransferring(false);
+      setShowTransferModal(false);
+    }
+  };
+
+  // ─── Feature 3: Invite Link ───────────────────────────────
+  const copyInviteLink = useCallback(() => {
+    const link = `${window.location.origin}/join/${code}`;
+    navigator.clipboard.writeText(link).then(() => {
+      setInviteCopied(true);
+      setToastMsg("🔗 Invite link copied!");
+      
+      // Fix: properly track and clear timeout
+      if (inviteTimeoutRef.current) clearTimeout(inviteTimeoutRef.current);
+      inviteTimeoutRef.current = setTimeout(() => {
+        setInviteCopied(false);
+      }, 2500);
+    });
+  }, [code]);
+
+  // ─── Feature 4: Watch History ─────────────────────────────
+  const startWatchHistory = useCallback(async (videoUrl, roomData, userId, allMembers) => {
+    if (!roomData?.id || !userId) return;
+    try {
+      // End any previous open session
+      if (watchHistoryIdRef.current) {
+        await supabase
+          .from("watch_history")
+          .update({ ended_at: new Date().toISOString() })
+          .eq("id", watchHistoryIdRef.current);
+      }
+      if (historyIntervalRef.current) clearInterval(historyIntervalRef.current);
+
+      const participants = allMembers.map((m) => m.user_id);
+      if (!participants.includes(userId)) participants.push(userId);
+
+      const { data: row } = await supabase
+        .from("watch_history")
+        .insert([{
+          room_id: roomData.id,
+          video_url: videoUrl,
+          video_title: extractVideoTitle(videoUrl),
+          participants,
+          last_position_seconds: 0,
+          total_watched_seconds: 0,
+        }])
+        .select()
+        .single();
+
+      if (row) {
+        watchHistoryIdRef.current = row.id;
+        watchStartTimeRef.current = Date.now();
+        // Update position every 30 s
+        historyIntervalRef.current = setInterval(async () => {
+          if (!playerRef.current || !watchHistoryIdRef.current) return;
+          const elapsed = (Date.now() - (watchStartTimeRef.current || Date.now())) / 1000;
+          await supabase.from("watch_history").update({
+            last_position_seconds: playerRef.current.currentTime,
+            total_watched_seconds: elapsed,
+          }).eq("id", watchHistoryIdRef.current);
+        }, 30000);
+      }
+    } catch (err) {
+      console.error("Watch history start error:", err);
+    }
+  }, []);
+
+  const endWatchHistory = useCallback(async () => {
+    if (!watchHistoryIdRef.current) return;
+    if (historyIntervalRef.current) clearInterval(historyIntervalRef.current);
+    const elapsed = watchStartTimeRef.current
+      ? (Date.now() - watchStartTimeRef.current) / 1000
+      : 0;
+    try {
+      await supabase.from("watch_history").update({
+        ended_at: new Date().toISOString(),
+        last_position_seconds: playerRef.current?.currentTime || 0,
+        total_watched_seconds: elapsed,
+      }).eq("id", watchHistoryIdRef.current);
+    } catch (err) {
+      console.error("Watch history end error:", err);
+    } finally {
+      watchHistoryIdRef.current = null;
+      watchStartTimeRef.current = null;
+    }
+  }, []);
+
+  // Cleanup history on unmount
+  useEffect(() => {
+    return () => {
+      if (historyIntervalRef.current) clearInterval(historyIntervalRef.current);
+    };
+  }, []);
+
   useEffect(() => {
     async function initRoom() {
       try {
@@ -260,6 +467,17 @@ export default function Room() {
             if (isHostRef.current && playerRef.current && channelRef.current) {
               channelRef.current.send({ type: "broadcast", event: "sync-event", payload: { ...roomStateRef.current, current_timestamp_seconds: playerRef.current.currentTime, force: true } });
             }
+          })
+          // Feature 2: Host Transfer — update roles on both clients instantly
+          .on("broadcast", { event: "host-transfer" }, ({ payload }) => {
+            const { newHostId } = payload;
+            const amNewHost = user.id === newHostId;
+            setIsHost(amNewHost);
+            isHostRef.current = amNewHost;
+            setMembers((prev) =>
+              prev.map((m) => ({ ...m, role: m.user_id === newHostId ? "host" : "member" }))
+            );
+            setToastMsg(amNewHost ? "👑 You are now the Host!" : "🔄 Host control transferred");
           })
           .on("presence", { event: "sync" }, () => {
             const state = subChannel.presenceState();
@@ -388,7 +606,12 @@ export default function Room() {
     setVideoError(null); setVideoLoading(true); setRoomState(prev => ({ ...prev, ...payload }));
     setHasInteracted(true);
     if (channelRef.current && connectionStatus === "SUBSCRIBED") channelRef.current.send({ type: "broadcast", event: "sync-event", payload });
-    supabase.from("room_state").update(payload).eq("room_id", room.id).then(() => setVideoUrlInput(""));
+    supabase.from("room_state").update(payload).eq("room_id", room.id).then(() => {
+      setVideoUrlInput("");
+      // Feature 4: Start tracking watch history for this new video
+      startWatchHistory(url, room, user.id, members);
+      triggerInteraction();
+    });
   };
 
   const handleSendMessage = async (e) => {
@@ -415,8 +638,42 @@ export default function Room() {
     await supabase.from("room_state").update(newValues).eq("room_id", room.id);
   }
 
+  useEffect(() => {
+    if (zoomLevel <= 1) {
+      setPanOffset({ x: 0, y: 0 });
+    }
+  }, [zoomLevel]);
+
+  const handleMouseDown = (e) => {
+    if (zoomLevel <= 1) return;
+    setIsDragging(true);
+    dragStartRef.current = { x: e.clientX, y: e.clientY };
+    clickStartPosRef.current = { x: e.clientX, y: e.clientY };
+  };
+
+  const handleMouseMove = (e) => {
+    triggerInteraction();
+    if (!isDragging || zoomLevel <= 1) return;
+    const dx = e.clientX - dragStartRef.current.x;
+    const dy = e.clientY - dragStartRef.current.y;
+    // Simple clamping to prevent scrolling completely offscreen
+    // A more perfect clamping requires container dimensions, but we keep it simple here:
+    setPanOffset(prev => ({
+      x: Math.max(-500, Math.min(500, prev.x + dx)),
+      y: Math.max(-500, Math.min(500, prev.y + dy))
+    }));
+    dragStartRef.current = { x: e.clientX, y: e.clientY };
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
   const handleVideoClick = (e) => {
     if (e.target.closest('button')) return;
+    const dist = Math.hypot(e.clientX - (clickStartPosRef.current?.x || e.clientX), e.clientY - (clickStartPosRef.current?.y || e.clientY));
+    if (zoomLevel > 1 && dist > 5) return; // it was a drag
+    
     const now = Date.now();
     const isDoubleTap = now - lastClickTimeRef.current < 300;
     lastClickTimeRef.current = now;
@@ -433,13 +690,38 @@ export default function Room() {
         seekFeedbackTimeoutRef.current = setTimeout(() => setSeekFeedback(null), 800);
       }
     } else {
-      setShowControls(true);
-      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-      controlsTimeoutRef.current = setTimeout(() => setShowControls(false), 3000);
+      triggerInteraction();
     }
   };
 
-  const handleLeaveRoom = () => { endCall(true); window.location.href = "/"; };
+  const handleLeaveRoom = async () => {
+    // Feature 4: Persist final watch position before leaving
+    await endWatchHistory();
+
+    // Feature 2: Auto-transfer host to partner if host is leaving and partner is online
+    if (isHost && members.length > 1) {
+      const partner = members.find((m) => m.user_id !== user?.id);
+      if (partner && onlineUsers.includes(partner.user_id)) {
+        try {
+          await Promise.all([
+            supabase.from("room_members").update({ role: "member" }).eq("room_id", room.id).eq("user_id", user.id),
+            supabase.from("room_members").update({ role: "host" }).eq("room_id", room.id).eq("user_id", partner.user_id),
+            supabase.from("rooms").update({ host_id: partner.user_id }).eq("id", room.id),
+          ]);
+          if (channelRef.current && connectionStatus === "SUBSCRIBED") {
+            channelRef.current.send({
+              type: "broadcast",
+              event: "host-transfer",
+              payload: { newHostId: partner.user_id, oldHostId: user.id },
+            });
+          }
+        } catch (e) { console.error("Auto-transfer failed:", e); }
+      }
+    }
+
+    endCall(true);
+    window.location.href = "/";
+  };
 
   const sendReaction = (emoji) => {
     triggerReaction(emoji);
@@ -469,7 +751,20 @@ export default function Room() {
           <div className="flex flex-col md:flex-row justify-between items-start gap-8 mb-12">
             <div>
               <h1 className="text-4xl font-black tracking-tight uppercase italic text-primary-gradient leading-none">Movie Night Room</h1>
-              <p className="mt-3 text-[#8B8B9A] text-[11px] font-black tracking-[0.3em] uppercase flex items-center gap-3">Room Code: <span className="text-white bg-white/5 px-3 py-1 rounded-md">{code}</span></p>
+              <div className="mt-3 flex items-center gap-3 flex-wrap">
+                <p className="text-[#8B8B9A] text-[11px] font-black tracking-[0.3em] uppercase flex items-center gap-3">Room Code: <span className="text-white bg-white/5 px-3 py-1 rounded-md">{code}</span></p>
+                {/* Feature 3: Invite link button */}
+                <button
+                  onClick={copyInviteLink}
+                  className={`px-4 py-1.5 rounded-full text-[9px] font-black uppercase tracking-widest flex items-center gap-1.5 transition-all border ${
+                    inviteCopied
+                      ? "bg-green-900/30 border-green-500/30 text-green-400"
+                      : "bg-white/5 border-white/10 text-[#8B8B9A] hover:border-[#881337]/40 hover:text-white"
+                  }`}
+                >
+                  {inviteCopied ? "✓ Copied!" : "🔗 Invite Partner"}
+                </button>
+              </div>
             </div>
             <div className="flex items-center gap-6 self-end md:self-auto">
               <div className="px-5 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest bg-black text-white border border-white/10 shadow-xl shadow-black flex items-center gap-3">
@@ -486,14 +781,25 @@ export default function Room() {
 
           <div className="flex flex-col lg:flex-row gap-10 items-start">
             <div className="flex-1 w-full space-y-10">
-              <div className="romantic-card !p-0 border-white/5 bg-white/[0.02] overflow-hidden shadow-2xl relative">
-                <div className="relative aspect-video bg-black group cursor-pointer" onClick={handleVideoClick}>
+              {/* Feature 1: fullscreen-container ref wraps the entire video card */}
+              <div ref={fullscreenContainerRef} className={`fullscreen-container romantic-card !p-0 border-white/5 bg-white/[0.02] overflow-hidden shadow-2xl relative ${isFullscreen && fsCursorHidden ? 'fs-cursor-hidden' : ''}`}
+                onMouseMove={triggerInteraction}
+              >
+                <div className={`relative bg-black group cursor-pointer overflow-hidden ${isFullscreen ? 'w-full h-screen' : 'aspect-video'}`} onClick={handleVideoClick} onMouseDown={handleMouseDown} onMouseMove={handleMouseMove} onMouseUp={handleMouseUp} onMouseLeave={handleMouseUp}>
                   {floatingReactions.map(r => (
                     <div key={r.id} className="float-reaction" style={{ left: `${r.left}%`, bottom: '20px' }}>{r.emoji}</div>
                   ))}
                   {roomState?.video_url ? (
-                    <video ref={playerRef} src={roomState.video_url} className="absolute inset-0 w-full h-full object-contain" playsInline
-                      onLoadedMetadata={(e) => { setVideoLoading(false); setVideoDuration(e.target.duration); }} 
+                    <video ref={playerRef} src={roomState.video_url} className={`absolute inset-0 w-full h-full pointer-events-none ${viewMode === 'fill' ? 'object-cover' : 'object-contain'}`} style={{ transform: `scale(${zoomLevel}) translate(${panOffset.x}px, ${panOffset.y}px)`, transition: isDragging ? 'none' : 'transform 0.3s ease-out' }} playsInline
+                      onLoadedMetadata={(e) => { 
+                        setVideoLoading(false); 
+                        setVideoDuration(e.target.duration); 
+                        if (isHost && !initialSeekDoneRef.current && roomState?.current_timestamp_seconds > 0) {
+                          e.target.currentTime = roomState.current_timestamp_seconds;
+                          initialSeekDoneRef.current = true;
+                        }
+                        triggerInteraction();
+                      }} 
                       onTimeUpdate={(e) => setCurrentTime(e.target.currentTime)}
                       onWaiting={() => setVideoLoading(true)} onPlaying={() => setVideoLoading(false)}
                       onPlay={() => isHost && updateRoomState({ is_playing: true, current_timestamp_seconds: playerRef.current?.currentTime || 0 })}
@@ -511,9 +817,9 @@ export default function Room() {
                       </div>
                     </div>
                   )}
-                  {isHost && hasInteracted && roomState?.video_url && showControls && (
-                    <div className="absolute inset-0 z-40 flex flex-col items-center justify-center bg-black/40">
-                      <div className="flex items-center gap-12 md:gap-20 mb-8">
+                  {isHost && hasInteracted && roomState?.video_url && (
+                    <div className={`absolute inset-0 z-40 flex flex-col items-center justify-end pb-24 bg-gradient-to-t from-black/80 via-black/20 to-transparent transition-opacity duration-500 ${showControls || !roomState?.is_playing ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+                      <div className="flex items-center gap-12 md:gap-20 mb-6">
                         <button onClick={(e) => { e.stopPropagation(); if (playerRef.current) { playerRef.current.currentTime = Math.max(0, playerRef.current.currentTime - 5); updateRoomState({ current_timestamp_seconds: playerRef.current.currentTime }, true); } }} className="w-16 h-16 rounded-full border-2 border-white/20 flex items-center justify-center text-white/90 hover:bg-white/10 active:scale-90 transition-all"><span className="text-sm font-black">-5s</span></button>
                         <button onClick={(e) => { e.stopPropagation(); if (roomState.is_playing) updateRoomState({ is_playing: false, current_timestamp_seconds: playerRef.current?.currentTime || 0 }); else updateRoomState({ is_playing: true, current_timestamp_seconds: playerRef.current?.currentTime || 0 }); }} className="w-24 h-24 rounded-full border-2 border-white/30 flex items-center justify-center text-white/90 hover:bg-white/10 active:scale-90 transition-all">{roomState.is_playing ? <svg className="w-12 h-12" fill="currentColor" viewBox="0 0 24 24"><path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/></svg> : <svg className="w-12 h-12 ml-2" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg>}</button>
                         <button onClick={(e) => { e.stopPropagation(); if (playerRef.current) { playerRef.current.currentTime = Math.min(playerRef.current.duration, playerRef.current.currentTime + 5); updateRoomState({ current_timestamp_seconds: playerRef.current.currentTime }, true); } }} className="w-16 h-16 rounded-full border-2 border-white/20 flex items-center justify-center text-white/90 hover:bg-white/10 active:scale-90 transition-all"><span className="text-sm font-black">+5s</span></button>
@@ -530,19 +836,101 @@ export default function Room() {
                           <span>{new Date(videoDuration * 1000).toISOString().substr(11, 8)}</span>
                         </div>
                       </div>
+                      {/* Feature 1: Fullscreen button inside host controls */}
+                      <button
+                        onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
+                        className="absolute bottom-4 right-4 w-10 h-10 rounded-full bg-black/40 border border-white/10 flex items-center justify-center hover:bg-white/10 transition-all"
+                        title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
+                      >
+                        {isFullscreen
+                          ? <svg className="w-4 h-4 text-white/70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" /></svg>
+                          : <svg className="w-4 h-4 text-white/70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" /></svg>
+                        }
+                      </button>
+                      {/* Feature 4: View Mode & Zoom Toggle */}
+                      <div className="absolute bottom-4 left-4 flex items-center gap-3">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setViewMode(prev => prev === "fit" ? "fill" : "fit");
+                          }}
+                          className="w-10 h-10 rounded-full bg-black/40 border border-white/10 flex items-center justify-center hover:bg-white/10 transition-all text-[9px] font-black uppercase tracking-widest text-white/70"
+                          title="Change View Mode"
+                        >
+                          {viewMode === "fit" ? "FIT" : "FILL"}
+                        </button>
+                        <div className="flex items-center gap-1 bg-black/40 border border-white/10 rounded-full px-2 h-10" onClick={e => e.stopPropagation()}>
+                          <button onClick={() => setZoomLevel(z => Math.max(1, z - 0.25))} className="text-white/50 hover:text-white px-2 py-1 transition-colors text-lg leading-none mb-0.5">-</button>
+                          <span className="text-[9px] font-black uppercase tracking-widest text-white/70 w-9 text-center">{Math.round(zoomLevel * 100)}%</span>
+                          <button onClick={() => setZoomLevel(z => Math.min(2, z + 0.25))} className="text-white/50 hover:text-white px-2 py-1 transition-colors text-base leading-none">+</button>
+                        </div>
+                      </div>
                     </div>
                   )}
                   {videoLoading && roomState?.video_url && !videoError && ( <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center z-10"><div className="w-14 h-14 border-4 border-rose-500/20 border-t-rose-500 rounded-full animate-spin mb-4"></div></div> )}
-                  {!hasInteracted && roomState?.video_url && ( <div onClick={() => setHasInteracted(true)} className="absolute inset-0 bg-[#0A0A0F]/95 flex flex-col items-center justify-center cursor-pointer backdrop-blur-2xl z-20"><div className="w-24 h-24 bg-primary-gradient rounded-full flex items-center justify-center mb-8 shadow-2xl transition-transform hover:scale-110"><span className="text-4xl text-white ml-2">▶</span></div><p className="text-3xl font-black text-white uppercase italic">Tap to join sync ❤️</p></div> )}
+                  {!hasInteracted && roomState?.video_url && ( <div onClick={() => { setHasInteracted(true); triggerInteraction(); }} className="absolute inset-0 bg-[#0A0A0F]/95 flex flex-col items-center justify-center cursor-pointer backdrop-blur-2xl z-20"><div className="w-24 h-24 bg-primary-gradient rounded-full flex items-center justify-center mb-8 shadow-2xl transition-transform hover:scale-110"><span className="text-4xl text-white ml-2">▶</span></div><p className="text-3xl font-black text-white uppercase italic">Tap to join sync ❤️</p></div> )}
                 </div>
-                <div className="p-8 border-t border-white/5 bg-white/[0.01]">
+                {/* Feature 1: Fullscreen chat overlay — slides in when showFsChat is true */}
+                {isFullscreen && (
+                  <div className={`fs-chat-overlay ${showFsChat ? 'fs-chat-open' : ''}`}>
+                    <div className="p-4 border-b border-white/5 bg-black/60 flex items-center justify-between">
+                      <h3 className="text-[10px] font-black uppercase tracking-[0.4em] text-[#8B8B9A] italic">Heartbeat Chat</h3>
+                      <button onClick={() => setShowFsChat(false)} className="w-7 h-7 rounded-full bg-white/5 flex items-center justify-center text-white/50 hover:text-white hover:bg-white/10 transition-all text-sm">✕</button>
+                    </div>
+                    <div className="flex-1 overflow-y-auto p-4 space-y-4 custom-scrollbar">
+                      {messages.map((msg) => (
+                        <div key={msg.id} className={`flex flex-col ${msg.user_id === user?.id ? 'items-end' : 'items-start'}`}>
+                          <div className={`px-4 py-2.5 rounded-[14px] text-[13px] font-medium leading-relaxed max-w-[90%] ${msg.user_id === user?.id ? 'bg-[#881337] text-white rounded-tr-none' : 'bg-[#2A2A2F] text-white/95 rounded-tl-none border border-white/5'}`}>{msg.content}</div>
+                          <span className="text-[8px] font-black text-[#55556A] mt-1.5 uppercase tracking-widest opacity-60">{new Date(msg.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="p-4 border-t border-white/5 bg-black/40">
+                      <form onSubmit={handleSendMessage} className="flex gap-2">
+                        <input className="flex-1 bg-[#1A1A1F] border border-white/10 rounded-[12px] py-3 px-4 text-[13px] font-medium placeholder:text-[#33334A] focus:border-[#881337]/40 outline-none" value={newMessage} onChange={e => { setNewMessage(e.target.value); handleTyping(); }} placeholder="Message..." />
+                        <button type="submit" className="w-10 h-10 rounded-full bg-[#881337] flex items-center justify-center text-white hover:opacity-90 transition-all"><span className="text-base">➜</span></button>
+                      </form>
+                    </div>
+                  </div>
+                )}
+                {/* Feature 1: Floating fullscreen toggle — always visible when video is loaded */}
+                {roomState?.video_url && !isHost && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); toggleFullscreen(); }}
+                    className="absolute bottom-4 right-4 z-30 w-10 h-10 rounded-full bg-black/50 border border-white/10 flex items-center justify-center hover:bg-white/10 transition-all"
+                    title={isFullscreen ? 'Exit Fullscreen' : 'Fullscreen'}
+                  >
+                    {isFullscreen
+                      ? <svg className="w-4 h-4 text-white/70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 9V4.5M9 9H4.5M9 9L3.75 3.75M9 15v4.5M9 15H4.5M9 15l-5.25 5.25M15 9h4.5M15 9V4.5M15 9l5.25-5.25M15 15h4.5M15 15v4.5m0-4.5l5.25 5.25" /></svg>
+                      : <svg className="w-4 h-4 text-white/70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15" /></svg>
+                    }
+                  </button>
+                )}
+                {/* Feature 1: Floating chat toggle in fullscreen mode */}
+                {isFullscreen && roomState?.video_url && (
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setShowFsChat(v => !v); }}
+                    className="absolute bottom-4 right-16 z-30 w-10 h-10 rounded-full bg-black/50 border border-white/10 flex items-center justify-center hover:bg-white/10 transition-all"
+                    title="Toggle Chat"
+                  >
+                    <svg className="w-4 h-4 text-white/70" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" /></svg>
+                  </button>
+                )}
+                {/* Fullscreen Immersion: Hide input field/set video if in fullscreen and inactive/playing */}
+                <div className={`p-8 border-t border-white/5 bg-white/[0.01] transition-opacity duration-500 ${isFullscreen && !showControls && roomState?.is_playing ? 'opacity-0 pointer-events-none absolute w-full' : 'opacity-100'}`}>
                   {isHost ? (
                     <div className="space-y-8">
-                      <div className="flex flex-col md:flex-row gap-4">
-                        <input type="text" value={videoUrlInput} onChange={(e) => setVideoUrlInput(e.target.value)} placeholder="PASTE DIRECT MP4 LINK..." className="romantic-input flex-1 text-center font-bold tracking-[0.1em] placeholder:text-[#33334A] focus:scale-[1.01]" />
-                        <button onClick={handleSetVideoUrl} className="pill-button bg-primary-gradient px-12 text-white shadow-[0_10px_20px_rgba(190,18,60,0.2)]">SET VIDEO</button>
-                      </div>
-                      {!showControls && roomState?.video_url && ( <p className="text-center text-[10px] text-[#55556A] font-black uppercase tracking-[0.3em] animate-pulse">Tap video for controls</p> )}
+                      {roomState?.video_url && !isChangingVideo ? (
+                        <div className="flex justify-center">
+                          <button onClick={() => setIsChangingVideo(true)} className="pill-button bg-white/5 border border-white/10 px-8 py-3 text-[10px] text-white/70 hover:bg-white/10 hover:text-white transition-all font-black tracking-[0.2em]">CHANGE VIDEO</button>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col md:flex-row gap-4">
+                          <input type="text" value={videoUrlInput} onChange={(e) => setVideoUrlInput(e.target.value)} placeholder="PASTE DIRECT MP4 LINK..." className="romantic-input flex-1 text-center font-bold tracking-[0.1em] placeholder:text-[#33334A] focus:scale-[1.01]" />
+                          <button onClick={() => { handleSetVideoUrl(); setIsChangingVideo(false); }} className="pill-button bg-primary-gradient px-12 text-white shadow-[0_10px_20px_rgba(190,18,60,0.2)]">SET VIDEO</button>
+                        </div>
+                      )}
+                      {!showControls && roomState?.video_url && !isChangingVideo && ( <p className="text-center text-[10px] text-[#55556A] font-black uppercase tracking-[0.3em] animate-pulse">Tap video for controls</p> )}
                     </div>
                   ) : (
                     <div className="flex flex-col items-center gap-8">
@@ -573,10 +961,19 @@ export default function Room() {
                         </div>
                         <div className="flex flex-col gap-0.5"><span className="text-[13px] font-bold text-white/90 truncate max-w-[140px] tracking-tight">{member.profiles?.full_name || "Partner"}</span><span className="text-[9px] font-bold text-[#55556A] uppercase tracking-widest">{member.role === 'host' ? 'Master of Sync' : 'Partner'}</span></div>
                       </div>
-                      {member.role === 'host' ? <div className="px-3 py-1.5 rounded-full bg-[#881337]/10 border border-[#881337]/30 flex items-center gap-2 shadow-[0_0_15px_rgba(136,197,55,0.1)]"><span className="text-[9px] font-black uppercase text-[#BE123C] tracking-widest">Host</span><span className="text-xs">👑</span></div> : <div className="px-3 py-1.5 rounded-full bg-white/5 border border-white/5"><span className="text-[9px] font-black uppercase text-[#55556A] tracking-widest">Member</span></div>}
+                      {member.role === 'host' ? <div className="px-3 py-1.5 rounded-full bg-[#881337]/10 border border-[#881337]/30 flex items-center gap-2"><span className="text-[9px] font-black uppercase text-[#BE123C] tracking-widest">Host</span><span className="text-xs">👑</span></div> : <div className="px-3 py-1.5 rounded-full bg-white/5 border border-white/5"><span className="text-[9px] font-black uppercase text-[#55556A] tracking-widest">Member</span></div>}
                     </div>
                   ))}
                 </div>
+                {/* Feature 2: Transfer Host button — only visible to current host when partner is online */}
+                {isHost && members.length > 1 && onlineUsers.length > 1 && (
+                  <button
+                    onClick={() => setShowTransferModal(true)}
+                    className="mt-5 w-full py-2.5 rounded-full border border-[#881337]/30 bg-[#881337]/5 text-[9px] font-black uppercase tracking-widest text-[#BE123C] hover:bg-[#881337]/15 transition-all flex items-center justify-center gap-2"
+                  >
+                    👑 Transfer Host
+                  </button>
+                )}
               </div>
               <div className="bg-[#0D0D12] backdrop-blur-2xl border border-[#881337]/30 rounded-[22px] flex flex-col items-center justify-center relative overflow-hidden min-h-[340px] shadow-2xl animate-in fade-in duration-500">
                 {callStatus === "IDLE" ? (
@@ -682,6 +1079,20 @@ export default function Room() {
         </div>
       </div>
       <audio ref={remoteAudioRef} autoPlay playsInline className="hidden" />
+
+      {/* Feature 1+2+3: Global Toast */}
+      <Toast message={toastMsg} onDismiss={() => setToastMsg(null)} />
+
+      {/* Feature 2: Host Transfer Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showTransferModal}
+        title="Transfer Host Control"
+        description={`Are you sure you want to transfer host control to ${members.find(m => m.user_id !== user?.id)?.profiles?.full_name || 'your partner'}? They will gain full playback control and you will become the partner.`}
+        confirmLabel="Transfer"
+        onConfirm={handleTransferHost}
+        onCancel={() => setShowTransferModal(false)}
+        loading={transferring}
+      />
     </div>
   );
 }
