@@ -1,8 +1,12 @@
+import { useEffect, useRef } from "react";
+
 export function CallOverlay({ 
   callStatus, 
   callType, 
-  localVideoRef, 
-  remoteVideoRef, 
+  localVideoRef: externalLocalVideoRef, 
+  remoteVideoRef: externalRemoteVideoRef, 
+  remoteStream,
+  localStream,
   isAudioMuted, 
   isVideoEnabled, 
   toggleMute, 
@@ -15,6 +19,40 @@ export function CallOverlay({
   profile
 }) {
   const remoteMember = members.find(m => m.user_id !== user?.id);
+  
+  const localVidRef = useRef(null);
+  const remoteVidRef = useRef(null);
+
+  // Sync with external refs if provided (for room-level logic)
+  useEffect(() => {
+    if (externalLocalVideoRef) externalLocalVideoRef.current = localVidRef.current;
+    if (externalRemoteVideoRef) externalRemoteVideoRef.current = remoteVidRef.current;
+  });
+
+  // Handle stream assignment
+  useEffect(() => {
+    const vid = localVidRef.current;
+    if (vid && localStream) {
+      if (vid.srcObject !== localStream) {
+        vid.srcObject = localStream;
+      }
+      vid.play().catch(e => console.warn("Local video play error:", e));
+    } else if (vid && !localStream) {
+      vid.srcObject = null;
+    }
+  }, [localStream, isVideoEnabled, callStatus]);
+
+  useEffect(() => {
+    const vid = remoteVidRef.current;
+    if (vid && remoteStream) {
+      if (vid.srcObject !== remoteStream) {
+        vid.srcObject = remoteStream;
+      }
+      vid.play().catch(e => console.warn("Remote video play error:", e));
+    } else if (vid && !remoteStream) {
+      vid.srcObject = null;
+    }
+  }, [remoteStream, callStatus]);
 
   if (callStatus === "IDLE") {
     return (
@@ -84,7 +122,7 @@ export function CallOverlay({
     <div className="w-full h-full flex flex-col p-2 animate-in fade-in duration-500">
       <div className="flex gap-2 h-[280px] w-full">
         <div className="flex-1 rounded-[18px] bg-black border border-white/5 overflow-hidden relative shadow-2xl">
-          <video ref={remoteVideoRef} autoPlay playsInline className={`w-full h-full object-cover transition-opacity duration-700 ${callStatus === "CONNECTED" ? 'opacity-100' : 'opacity-0'}`} />
+          <video ref={remoteVidRef} autoPlay playsInline className={`w-full h-full object-cover transition-opacity duration-700 ${callStatus === "CONNECTED" ? 'opacity-100' : 'opacity-0'}`} />
           {callStatus !== "CONNECTED" && (<div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0D0D12]"><div className="w-10 h-10 border-2 border-[#881337]/20 border-t-[#BE123C] rounded-full animate-spin mb-3"></div><span className="text-[8px] font-black uppercase tracking-widest text-[#881337]/60">Connecting...</span></div>)}
           <div className="absolute top-3 left-3 px-2 py-1 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center gap-1.5 z-20">
             <div className={`w-1 h-1 rounded-full ${callStatus === "CONNECTED" ? "bg-green-500" : "bg-yellow-500 animate-pulse"}`}></div>
@@ -92,7 +130,7 @@ export function CallOverlay({
           </div>
         </div>
         <div className="flex-1 rounded-[18px] bg-black border border-[#BE123C]/20 overflow-hidden relative shadow-2xl transition-all">
-          <video ref={localVideoRef} autoPlay playsInline muted className={`w-full h-full object-cover scale-x-[-1] transition-opacity duration-700 ${!isVideoEnabled ? 'opacity-0' : 'opacity-100'}`} />
+          <video ref={localVidRef} autoPlay playsInline muted className={`w-full h-full object-cover scale-x-[-1] transition-opacity duration-700 ${!isVideoEnabled ? 'opacity-0' : 'opacity-100'}`} />
           {!isVideoEnabled && <div className="absolute inset-0 flex items-center justify-center bg-[#0D0D12]"><span className="text-[8px] font-black uppercase text-white/30 tracking-widest">Camera Off</span></div>}
           <div className="absolute top-3 left-3 px-2 py-1 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center gap-1.5 z-20">
             <div className="w-1 h-1 rounded-full bg-green-500"></div>

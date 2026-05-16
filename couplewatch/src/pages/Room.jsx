@@ -70,10 +70,18 @@ export default function Room() {
   const chat = useChat(room, user, connectionStatus, channelRef);
   const webrtc = useWebRTC(user, channelRef);
 
-  // WebRTC Stream Attachments
-  useEffect(() => { if (webrtc.remoteStream && remoteVideoRef.current) remoteVideoRef.current.srcObject = webrtc.remoteStream; }, [webrtc.remoteStream, webrtc.callStatus]);
-  useEffect(() => { if (webrtc.localStream && localVideoRef.current) localVideoRef.current.srcObject = webrtc.localStream; }, [webrtc.localStream, webrtc.isVideoEnabled]);
-  useEffect(() => { if (webrtc.remoteStream && remoteAudioRef.current) remoteAudioRef.current.srcObject = webrtc.remoteStream; }, [webrtc.remoteStream]);
+  // We need a stable reference to webrtc.handleWebRTCSignal for the event listener
+  const handleWebRTCSignalRef = useRef(webrtc.handleWebRTCSignal);
+  useEffect(() => {
+    handleWebRTCSignalRef.current = webrtc.handleWebRTCSignal;
+  }, [webrtc.handleWebRTCSignal]);
+
+  // Audio Stream Attachment (Keep here as it's a global hidden element)
+  useEffect(() => { 
+    if (webrtc.remoteStream && remoteAudioRef.current) {
+      remoteAudioRef.current.srcObject = webrtc.remoteStream;
+    }
+  }, [webrtc.remoteStream]);
 
   // Floating Reactions Logic
   const triggerReaction = (emoji) => {
@@ -113,7 +121,7 @@ export default function Room() {
           });
         })
         .on("broadcast", { event: "chat-msg" }, ({ payload }) => chat.setMessages(current => current.some(x => x.id === payload.id) ? current : [...current, payload]))
-        .on("broadcast", { event: "webrtc-signal" }, ({ payload }) => webrtc.handleWebRTCSignal(payload))
+        .on("broadcast", { event: "webrtc-signal" }, ({ payload }) => handleWebRTCSignalRef.current(payload))
         .on("broadcast", { event: "sync-event" }, ({ payload }) => {
           roomSync.setRoomState(payload);
           if (payload.force && playerRef.current && !roomSync.isHostRef.current) {
@@ -299,6 +307,8 @@ export default function Room() {
                   {...webrtc} 
                   localVideoRef={localVideoRef} 
                   remoteVideoRef={remoteVideoRef} 
+                  remoteStream={webrtc.remoteStream}
+                  localStream={webrtc.localStream}
                   members={roomSync.members} 
                   user={user} 
                   profile={roomSync.profile} 
