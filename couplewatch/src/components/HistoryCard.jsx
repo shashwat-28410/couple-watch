@@ -26,7 +26,7 @@ function formatDuration(seconds) {
  *   entry     — watch_history row from Supabase
  *   onRewatch — callback(entry) when user clicks to re-watch
  */
-export default function HistoryCard({ entry, onRewatch }) {
+export default function HistoryCard({ entry, onRewatch, onDelete }) {
   // Progress: ratio of last_position to estimated total
   // We store total_watched_seconds as the running watch time, not the video duration.
   // Use last_position_seconds as proxy for progress out of a rough estimate.
@@ -36,9 +36,18 @@ export default function HistoryCard({ entry, onRewatch }) {
 
   return (
     <div
-      className="romantic-card border-white/5 hover:-translate-y-2 hover:scale-[1.02] hover:border-[#881337]/40 hover:shadow-[0_25px_50px_rgba(136,19,55,0.25)] transition-all duration-300 cursor-pointer group"
+      className="romantic-card border-white/5 hover:-translate-y-2 hover:scale-[1.02] hover:border-[#881337]/40 hover:shadow-[0_25px_50px_rgba(136,19,55,0.25)] transition-all duration-300 cursor-pointer group relative"
       onClick={() => onRewatch && onRewatch(entry)}
     >
+      {/* Delete Button */}
+      <button 
+        onClick={(e) => { e.stopPropagation(); onDelete && onDelete(entry); }}
+        className="absolute top-4 right-4 z-20 w-8 h-8 rounded-full bg-black/60 border border-white/10 flex items-center justify-center opacity-0 group-hover:opacity-100 hover:bg-rose-900/40 hover:border-rose-500/30 transition-all text-white/40 hover:text-rose-400"
+        title="Delete History"
+      >
+        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>
+      </button>
+
       {/* Thumbnail area */}
       <div className="h-40 bg-[#0D0D12] rounded-[16px] mb-5 overflow-hidden relative border border-white/[0.04] transition-transform duration-300 group-hover:scale-[1.03]">
         {/* Fallback icon */}

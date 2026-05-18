@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabaseClient";
 import Navbar from "../components/Navbar";
 import HistoryCard from "../components/HistoryCard";
 import HistorySkeleton from "../components/HistorySkeleton";
+import ConfirmModal from "../components/ConfirmModal";
 
 export default function History() {
   const navigate = useNavigate();
@@ -12,6 +13,15 @@ export default function History() {
   const [continueWatching, setContinueWatching] = useState([]);
   const [recentHistory, setRecentHistory] = useState([]);
   const [stats, setStats] = useState({ totalSessions: 0, totalHours: 0, totalMinutes: 0 });
+  const [isHistoryEnabled, setIsHistoryEnabled] = useState(() => localStorage.getItem("couplewatch_history_enabled") === "true");
+  const [showConfirmClear, setShowConfirmClear] = useState(false);
+  const [deletingEntry, setDeletingEntry] = useState(null);
+
+  const toggleHistory = () => {
+    const newVal = !isHistoryEnabled;
+    setIsHistoryEnabled(newVal);
+    localStorage.setItem("couplewatch_history_enabled", newVal.toString());
+  };
 
   useEffect(() => {
     async function load() {
@@ -71,12 +81,37 @@ export default function History() {
     navigate(`/room/${code}`);
   };
 
+  const handleDeleteEntry = async () => {
+    if (!deletingEntry || !user) return;
+    const { error } = await supabase.from("watch_history").delete().eq("id", deletingEntry.id);
+    if (!error) {
+      setContinueWatching(prev => prev.filter(h => h.id !== deletingEntry.id));
+      setRecentHistory(prev => prev.filter(h => h.id !== deletingEntry.id));
+    }
+    setDeletingEntry(null);
+  };
+
+  const handleClearHistory = async () => {
+    if (!user) return;
+    const { error } = await supabase.from("watch_history").delete().contains("participants", [user.id]);
+    if (!error) {
+      setContinueWatching([]);
+      setRecentHistory([]);
+      setStats({ totalSessions: 0, totalHours: 0, totalMinutes: 0 });
+    }
+    setShowConfirmClear(false);
+  };
+
   const statCards = [
-    { label: "Sessions Together", value: stats.totalSessions, icon: "🎬" },
+    { label: "Sessions Together", value: stats.totalSessions, icon: (
+      <svg className="w-8 h-8 text-[#BE123C]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z" /></svg>
+    )},
     {
       label: "Hours Watched",
       value: stats.totalHours > 0 ? `${stats.totalHours}h ${stats.totalMinutes}m` : `${stats.totalMinutes}m`,
-      icon: "⏱️",
+      icon: (
+        <svg className="w-8 h-8 text-[#BE123C]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+      ),
     },
   ];
 
@@ -90,11 +125,30 @@ export default function History() {
         <div className="max-width-container mx-auto">
 
           {/* Header */}
-          <div className="mb-12">
-            <h1 className="text-4xl font-black tracking-tight uppercase italic text-primary-gradient leading-none mb-3">
-              Watch History
-            </h1>
-            <p className="text-[#8B8B9A] text-sm">Your shared moments together ❤️</p>
+          <div className="mb-12 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+            <div>
+              <h1 className="text-4xl font-black tracking-tight uppercase italic text-primary-gradient leading-none mb-3">
+                Watch History
+              </h1>
+              <p className="text-[#8B8B9A] text-sm">Your shared moments together ❤️</p>
+            </div>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={toggleHistory}
+                className={`px-5 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all flex items-center gap-2 ${isHistoryEnabled ? 'bg-green-900/20 border-green-500/30 text-green-400' : 'bg-white/5 border-white/10 text-[#55556A] hover:text-white'}`}
+              >
+                <div className={`w-2 h-2 rounded-full ${isHistoryEnabled ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-[#33334A]'}`}></div>
+                History: {isHistoryEnabled ? 'Enabled' : 'Disabled'}
+              </button>
+              {(recentHistory.length > 0 || continueWatching.length > 0) && (
+                <button
+                  onClick={() => setShowConfirmClear(true)}
+                  className="px-5 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest bg-white/5 border border-white/10 text-[#55556A] hover:bg-rose-900/20 hover:border-rose-500/30 hover:text-rose-400 transition-all"
+                >
+                  Clear All
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Stats */}
@@ -130,7 +184,7 @@ export default function History() {
                 {loading
                   ? Array(3).fill(0).map((_, i) => <HistorySkeleton key={i} />)
                   : continueWatching.map((entry) => (
-                      <HistoryCard key={entry.id} entry={entry} onRewatch={handleRewatch} />
+                      <HistoryCard key={entry.id} entry={entry} onRewatch={handleRewatch} onDelete={setDeletingEntry} />
                     ))}
               </div>
             </section>
@@ -167,13 +221,29 @@ export default function History() {
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
                 {recentHistory.map((entry) => (
-                  <HistoryCard key={entry.id} entry={entry} onRewatch={handleRewatch} />
+                  <HistoryCard key={entry.id} entry={entry} onRewatch={handleRewatch} onDelete={setDeletingEntry} />
                 ))}
               </div>
             )}
           </section>
         </div>
       </div>
+
+      <ConfirmModal 
+        isOpen={!!deletingEntry} 
+        onCancel={() => setDeletingEntry(null)} 
+        onConfirm={handleDeleteEntry} 
+        title="Delete Session?"
+        description="Are you sure you want to remove this memory? This cannot be undone."
+      />
+
+      <ConfirmModal 
+        isOpen={showConfirmClear} 
+        onCancel={() => setShowConfirmClear(false)} 
+        onConfirm={handleClearHistory} 
+        title="Clear All History?"
+        description="This will permanently delete your entire shared watch history. Proceed?"
+      />
     </div>
   );
 }

@@ -25,6 +25,9 @@ export default function Room() {
   const [zoomLevel, setZoomLevel] = useState(1);
   const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
+  const [overlayPos, setOverlayPos] = useState({ x: 20, y: 20 });
+  const [isOverlayMinimized, setIsOverlayMinimized] = useState(false);
+  const [isHistoryEnabled, setIsHistoryEnabled] = useState(() => localStorage.getItem("couplewatch_history_enabled") === "true");
   const [videoError, setVideoError] = useState(null);
   const [videoLoading, setVideoLoading] = useState(false);
   const [videoDuration, setVideoDuration] = useState(0);
@@ -75,6 +78,7 @@ export default function Room() {
   const seekFeedbackTimeoutRef = useRef(null);
   const peerConnectionRef = useRef(null);
   const remoteVideoRef = useRef(null);
+  const overlayRemoteVideoRef = useRef(null);
   const localVideoRef = useRef(null);
   const remoteAudioRef = useRef(null);
   const iceCandidatesQueue = useRef([]);
@@ -90,7 +94,10 @@ export default function Room() {
   useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
   // WebRTC Stream Attachments
-  useEffect(() => { if (remoteStream && remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStream; }, [remoteStream, callStatus]);
+  useEffect(() => { 
+    if (remoteStream && remoteVideoRef.current) remoteVideoRef.current.srcObject = remoteStream; 
+    if (remoteStream && overlayRemoteVideoRef.current) overlayRemoteVideoRef.current.srcObject = remoteStream;
+  }, [remoteStream, callStatus, isFullscreen]);
   useEffect(() => { if (localStream && localVideoRef.current) localVideoRef.current.srcObject = localStream; }, [localStream, isVideoEnabled]);
   useEffect(() => { if (remoteStream && remoteAudioRef.current) remoteAudioRef.current.srcObject = remoteStream; }, [remoteStream]);
 
@@ -608,8 +615,10 @@ export default function Room() {
     if (channelRef.current && connectionStatus === "SUBSCRIBED") channelRef.current.send({ type: "broadcast", event: "sync-event", payload });
     supabase.from("room_state").update(payload).eq("room_id", room.id).then(() => {
       setVideoUrlInput("");
-      // Feature 4: Start tracking watch history for this new video
-      startWatchHistory(url, room, user.id, members);
+      // Feature 4: Start tracking watch history for this new video if enabled
+      if (isHistoryEnabled) {
+        startWatchHistory(url, room, user.id, members);
+      }
       triggerInteraction();
     });
   };
@@ -651,22 +660,54 @@ export default function Room() {
     clickStartPosRef.current = { x: e.clientX, y: e.clientY };
   };
 
+  const [isOverlayDragging, setIsOverlayDragging] = useState(false);
+  const overlayDragStartRef = useRef({ x: 0, y: 0 });
+
+  const handleOverlayMouseDown = (e) => {
+    e.stopPropagation();
+    setIsOverlayDragging(true);
+    const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+    const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+    overlayDragStartRef.current = { x: clientX - overlayPos.x, y: clientY - overlayPos.y };
+  };
+
   const handleMouseMove = (e) => {
     triggerInteraction();
-    if (!isDragging || zoomLevel <= 1) return;
-    const dx = e.clientX - dragStartRef.current.x;
-    const dy = e.clientY - dragStartRef.current.y;
-    // Simple clamping to prevent scrolling completely offscreen
-    // A more perfect clamping requires container dimensions, but we keep it simple here:
-    setPanOffset(prev => ({
-      x: Math.max(-500, Math.min(500, prev.x + dx)),
-      y: Math.max(-500, Math.min(500, prev.y + dy))
-    }));
-    dragStartRef.current = { x: e.clientX, y: e.clientY };
+    
+    const clientX = e.clientX ?? e.touches?.[0]?.clientX;
+    const clientY = e.clientY ?? e.touches?.[0]?.clientY;
+    if (clientX === undefined) return;
+
+    // Video Pan Logic
+    if (isDragging && zoomLevel > 1) {
+      const dx = clientX - dragStartRef.current.x;
+      const dy = clientY - dragStartRef.current.y;
+      setPanOffset(prev => ({
+        x: Math.max(-500, Math.min(500, prev.x + dx)),
+        y: Math.max(-500, Math.min(500, prev.y + dy))
+      }));
+      dragStartRef.current = { x: clientX, y: clientY };
+    }
+
+    // Overlay Drag Logic
+    if (isOverlayDragging) {
+      const newX = clientX - overlayDragStartRef.current.x;
+      const newY = clientY - overlayDragStartRef.current.y;
+      
+      // Clamp within screen boundaries
+      const maxX = window.innerWidth - (isOverlayMinimized ? 40 : 256);
+      const maxY = window.innerHeight - (isOverlayMinimized ? 40 : 176);
+      
+      setOverlayPos({
+        x: Math.max(0, Math.min(maxX, newX)),
+        y: Math.max(0, Math.min(maxY, newY))
+      });
+    }
   };
 
   const handleMouseUp = () => {
     setIsDragging(false);
+    setIsOverlayDragging(false);
   };
 
   const handleVideoClick = (e) => {
@@ -695,8 +736,10 @@ export default function Room() {
   };
 
   const handleLeaveRoom = async () => {
-    // Feature 4: Persist final watch position before leaving
-    await endWatchHistory();
+    // Feature 4: Persist final watch position before leaving if enabled
+    if (isHistoryEnabled) {
+      await endWatchHistory();
+    }
 
     // Feature 2: Auto-transfer host to partner if host is leaving and partner is online
     if (isHost && members.length > 1) {
@@ -789,6 +832,52 @@ export default function Room() {
                   {floatingReactions.map(r => (
                     <div key={r.id} className="float-reaction" style={{ left: `${r.left}%`, bottom: '20px' }}>{r.emoji}</div>
                   ))}
+                  {/* Feature 4: Fullscreen Call Overlay */}
+                  {isFullscreen && callStatus === "CONNECTED" && remoteStream && (
+                    <div 
+                      className={`absolute z-[100] ${isOverlayDragging ? '' : 'transition-all duration-300'} ${isOverlayMinimized ? 'w-10 h-10' : 'w-48 h-32 md:w-64 md:h-44'} rounded-2xl overflow-hidden border border-[#881337]/40 shadow-2xl bg-[#0D0D12] group/overlay`}
+                      style={{ 
+                        left: overlayPos.x, 
+                        top: overlayPos.y, 
+                        cursor: isOverlayDragging ? 'grabbing' : 'grab',
+                        touchAction: 'none'
+                      }}
+                      onMouseDown={handleOverlayMouseDown}
+                      onTouchStart={handleOverlayMouseDown}
+                      onMouseMove={handleMouseMove}
+                      onTouchMove={handleMouseMove}
+                      onMouseUp={handleMouseUp}
+                      onTouchEnd={handleMouseUp}
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {!isOverlayMinimized && (
+                        <div className="absolute top-2 left-1/2 -translate-x-1/2 w-8 h-1 rounded-full bg-white/20 z-30 pointer-events-none" />
+                      )}
+                      <video 
+                        ref={overlayRemoteVideoRef} 
+                        autoPlay 
+                        playsInline 
+                        className={`w-full h-full object-cover ${isOverlayMinimized ? 'opacity-0' : 'opacity-100'}`} 
+                      />
+                      <div className="absolute inset-0 bg-black/40 opacity-0 group-hover/overlay:opacity-100 transition-opacity flex items-center justify-center gap-3">
+                        <button 
+                          onClick={(e) => { e.stopPropagation(); setIsOverlayMinimized(!isOverlayMinimized); }}
+                          className="w-10 h-10 rounded-full bg-black/80 border border-white/10 flex items-center justify-center hover:bg-white/20 transition-all text-white shadow-xl"
+                          title={isOverlayMinimized ? "Expand Camera" : "Minimize Camera"}
+                        >
+                          {isOverlayMinimized ? <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" /></svg> : <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M18 12H6" /></svg>}
+                        </button>
+                      </div>
+                      {isOverlayMinimized && (
+                        <div 
+                          className="absolute inset-0 flex items-center justify-center bg-[#1A1A1F] cursor-pointer hover:bg-[#2A2A2F] transition-colors"
+                          onClick={(e) => { e.stopPropagation(); setIsOverlayMinimized(false); }}
+                        >
+                          <svg className="w-5 h-5 text-[#881337] animate-pulse" fill="currentColor" viewBox="0 0 24 24"><path d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" /></svg>
+                        </div>
+                      )}
+                    </div>
+                  )}
                   {roomState?.video_url ? (
                     <video ref={playerRef} src={roomState.video_url} className={`absolute inset-0 w-full h-full pointer-events-none ${viewMode === 'fill' ? 'object-cover' : 'object-contain'}`} style={{ transform: `scale(${zoomLevel}) translate(${panOffset.x}px, ${panOffset.y}px)`, transition: isDragging ? 'none' : 'transform 0.3s ease-out' }} playsInline
                       onLoadedMetadata={(e) => { 
@@ -817,7 +906,7 @@ export default function Room() {
                       </div>
                     </div>
                   )}
-                  {isHost && hasInteracted && roomState?.video_url && (
+                  {hasInteracted && roomState?.video_url && (
                     <div className={`absolute inset-0 z-40 flex flex-col items-center justify-end pb-24 bg-gradient-to-t from-black/80 via-black/20 to-transparent transition-opacity duration-500 ${showControls || !roomState?.is_playing ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
                       <div className="flex items-center gap-12 md:gap-20 mb-6">
                         <button onClick={(e) => { e.stopPropagation(); if (playerRef.current) { playerRef.current.currentTime = Math.max(0, playerRef.current.currentTime - 5); updateRoomState({ current_timestamp_seconds: playerRef.current.currentTime }, true); } }} className="w-16 h-16 rounded-full border-2 border-white/20 flex items-center justify-center text-white/90 hover:bg-white/10 active:scale-90 transition-all"><span className="text-sm font-black">-5s</span></button>
