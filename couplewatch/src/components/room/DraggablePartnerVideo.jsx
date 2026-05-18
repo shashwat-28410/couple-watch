@@ -69,7 +69,6 @@ export function DraggablePartnerVideo({ remoteVideoRef, remoteStream, callStatus
       />
       <div className="absolute top-2 left-2 px-2 py-1 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center gap-1.5">
         <div className="w-1 h-1 rounded-full bg-green-500"></div>
-        <span className="text-[7px] font-black uppercase text-white tracking-widest">{partnerName}</span>
       </div>
     </div>
   );

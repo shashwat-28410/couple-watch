@@ -28,6 +28,7 @@ export default function Room() {
   const [videoUrlInput, setVideoUrlInput] = useState("");
   const [floatingReactions, setFloatingReactions] = useState([]);
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [isTheaterMode, setIsTheaterMode] = useState(false);
 
   // Refs
   const playerRef = useRef(null);
@@ -36,6 +37,7 @@ export default function Room() {
   const remoteAudioRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const containerRef = useRef(null);
+  const activeChannelRef = useRef(null);
 
   const toggleFullScreen = () => {
     if (!containerRef.current) return;
@@ -69,6 +71,23 @@ export default function Room() {
 
   const chat = useChat(room, user, connectionStatus, channelRef);
   const webrtc = useWebRTC(user, channelRef);
+
+  const sendRemoteSignal = (type) => {
+    if (channelRef.current && connectionStatus === "SUBSCRIBED") {
+      channelRef.current.send({
+        type: "broadcast",
+        event: "remote-control",
+        payload: { type, senderName: roomSync.profile?.full_name || "Partner" }
+      });
+    }
+  };
+
+  // Auto-join screen share calls
+  useEffect(() => {
+    if (webrtc.pendingOffer?.incomingType === 'screen') {
+      webrtc.joinIncomingCall();
+    }
+  }, [webrtc.pendingOffer, webrtc.joinIncomingCall]);
 
   // We need a stable reference to webrtc.handleWebRTCSignal for the event listener
   const handleWebRTCSignalRef = useRef(webrtc.handleWebRTCSignal);
@@ -110,7 +129,9 @@ export default function Room() {
       subChannel = supabase.channel(`room_${room.id}`, { 
         config: { presence: { key: user.id }, broadcast: { self: false, ack: false } } 
       });
+
       channelRef.current = subChannel;
+      activeChannelRef.current = subChannel;
 
       subChannel
         .on("postgres_changes", { event: "UPDATE", schema: "public", table: "room_state", filter: `room_id=eq.${room.id}` }, (p) => roomSync.setRoomState(prev => ({ ...prev, ...p.new })))
@@ -122,6 +143,11 @@ export default function Room() {
         })
         .on("broadcast", { event: "chat-msg" }, ({ payload }) => chat.setMessages(current => current.some(x => x.id === payload.id) ? current : [...current, payload]))
         .on("broadcast", { event: "webrtc-signal" }, ({ payload }) => handleWebRTCSignalRef.current(payload))
+        .on("broadcast", { event: "remote-control" }, ({ payload }) => {
+          if (roomSync.isHostRef.current && payload.type === "request-pause") {
+            alert(`${payload.senderName} wants to pause the movie! ⏸️`);
+          }
+        })
         .on("broadcast", { event: "sync-event" }, ({ payload }) => {
           roomSync.setRoomState(payload);
           if (payload.force && playerRef.current && !roomSync.isHostRef.current) {
@@ -238,6 +264,8 @@ export default function Room() {
     );
   }
 
+  const isAnyCinemaActive = isFullScreen || isTheaterMode || webrtc.screenStream || webrtc.remoteScreenStream;
+
   return (
     <div className="min-h-screen bg-[#0A0A0F] text-white flex flex-col font-sans overflow-hidden">
       <div className="w-full absolute top-0 z-50"><Navbar user={user} /></div>
@@ -257,12 +285,12 @@ export default function Room() {
                 }`}></span>
                 <span>{ connectionStatus === "SUBSCRIBED" ? "Connected" : connectionStatus === "JOINING" ? "Connecting..." : "Reconnecting..." }</span>
               </div>
-              <button onClick={() => { webrtc.endCall(true); navigate("/"); }} className="px-8 py-3.5 rounded-full bg-[#881337] border border-[#BE123C]/20 text-white text-[10px] font-black uppercase tracking-[0.2em] hover:brightness-125 transition-all">Leave Room</button>
+              <button onClick={() => { webrtc.fullReset(); navigate("/"); }} className="px-8 py-3.5 rounded-full bg-[#881337] border border-[#BE123C]/20 text-white text-[10px] font-black uppercase tracking-[0.2em] hover:brightness-125 transition-all">Leave Room</button>
             </div>
           </div>
 
           <div className="flex flex-col lg:flex-row gap-10 items-start">
-            <div className="flex-1 w-full space-y-10">
+            <div className={`transition-all duration-500 ${isTheaterMode ? 'w-full' : 'flex-1 w-full'} space-y-10`}>
               <VideoPlayer 
                 roomState={roomState} 
                 isHost={roomSync.isHost} 
@@ -273,9 +301,16 @@ export default function Room() {
                 floatingReactions={floatingReactions}
                 isFullScreen={isFullScreen}
                 toggleFullScreen={toggleFullScreen}
+                isTheaterMode={isTheaterMode}
+                setIsTheaterMode={setIsTheaterMode}
                 containerRef={containerRef}
+                callType={webrtc.callType}
+                screenStream={webrtc.screenStream}
+                remoteScreenStream={webrtc.remoteScreenStream}
+                sendRemoteSignal={sendRemoteSignal}
               >
-                {isFullScreen && (
+                {/* Always show draggable video if any cinema mode or call is active */}
+                {(isAnyCinemaActive || webrtc.callStatus === "CONNECTED") && (
                   <DraggablePartnerVideo 
                     remoteVideoRef={remoteVideoRef}
                     remoteStream={webrtc.remoteStream}
@@ -287,47 +322,77 @@ export default function Room() {
               
               <div className="p-8 border-t border-white/5 bg-white/[0.01] rounded-b-[22px]">
                 {roomSync.isHost ? (
-                  <div className="flex flex-col md:flex-row gap-4">
-                    <input type="text" value={videoUrlInput} onChange={(e) => setVideoUrlInput(e.target.value)} placeholder="PASTE DIRECT MP4 LINK..." className="romantic-input flex-1 text-center font-bold tracking-[0.1em] placeholder:text-[#33334A] focus:scale-[1.01]" />
-                    <button onClick={handleSetVideoUrl} className="pill-button bg-primary-gradient px-12 text-white">SET VIDEO</button>
+                  <div className="flex flex-col gap-6">
+                    <div className="flex flex-col md:flex-row gap-4">
+                      <input type="text" value={videoUrlInput} onChange={(e) => setVideoUrlInput(e.target.value)} placeholder="PASTE DIRECT MP4 LINK..." className="romantic-input flex-1 text-center font-bold tracking-[0.1em] placeholder:text-[#33334A] focus:scale-[1.01]" />
+                      <button onClick={handleSetVideoUrl} className="pill-button bg-primary-gradient px-12 text-white">SET VIDEO</button>
+                    </div>
+                    
+                    <div className="flex items-center justify-center gap-4">
+                      <div className="h-px bg-white/5 flex-1"></div>
+                      <span className="text-[10px] font-black text-[#33334A] uppercase tracking-[0.3em]">OR THE NEW WAY</span>
+                      <div className="h-px bg-white/5 flex-1"></div>
+                    </div>
+
+                    <div className="flex justify-center">
+                      <button 
+                        onClick={() => webrtc.screenStream ? webrtc.stopScreenShare() : webrtc.startScreenShare()} 
+                        className={`px-6 py-3 rounded-full text-[10px] font-black uppercase tracking-[0.2em] transition-all duration-300 active:scale-95 border ${
+                          webrtc.screenStream 
+                          ? 'bg-[#881337] text-white border-[#881337]' 
+                          : 'bg-white/5 border-white/10 text-white/60 hover:text-white hover:border-white/20'
+                        }`}
+                      >
+                        {webrtc.screenStream ? 'STOP SHARING' : 'SHARE A CINEMA TAB'}
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <div className="flex flex-col items-center gap-8">
-                    <button onClick={handleForceSync} className="pill-button bg-white/5 border border-white/10 px-12 text-[10px] font-black tracking-[0.2em]">🔄 FORCE SYNC</button>
+                    {webrtc.remoteScreenStream ? (
+                      <div className="flex flex-col items-center gap-2">
+                        <div className="flex items-center gap-3 px-6 py-2 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-500 text-[10px] font-black uppercase tracking-widest animate-pulse">
+                          <span className="w-2 h-2 rounded-full bg-rose-500 shadow-[0_0_8px_#f43f5e]"></span>
+                          Watching Partner's Screen
+                        </div>
+                        <p className="text-[9px] font-bold text-[#33334A] uppercase tracking-widest">Everything is perfectly synced by magic</p>
+                      </div>
+                    ) : (
+                      <button onClick={handleForceSync} className="pill-button bg-white/5 border border-white/10 px-12 text-[10px] font-black tracking-[0.2em]">🔄 FORCE SYNC</button>
+                    )}
                   </div>
                 )}
               </div>
             </div>
 
-            <div className="w-full lg:w-[400px] flex flex-col gap-6 h-[850px]">
-              <PresenceList members={roomSync.members} onlineUsers={roomSync.onlineUsers} />
-              
-              <div className="bg-[#0D0D12] backdrop-blur-2xl border border-[#881337]/30 rounded-[22px] min-h-[340px] shadow-2xl overflow-hidden">
-                <CallOverlay 
-                  {...webrtc} 
-                  localVideoRef={localVideoRef} 
-                  remoteVideoRef={remoteVideoRef} 
-                  remoteStream={webrtc.remoteStream}
-                  localStream={webrtc.localStream}
-                  members={roomSync.members} 
-                  user={user} 
-                  profile={roomSync.profile} 
-                />
-              </div>
+            {!isTheaterMode && (
+              <div className="w-full lg:w-[400px] flex flex-col gap-6 h-[850px] animate-in fade-in slide-in-from-right-10 duration-500">
+                <PresenceList members={roomSync.members} onlineUsers={roomSync.onlineUsers} />
+                
+                <div className="bg-[#0D0D12] backdrop-blur-2xl border border-[#881337]/30 rounded-[22px] min-h-[340px] shadow-2xl overflow-hidden">
+                  <CallOverlay 
+                    {...webrtc} 
+                    localVideoRef={localVideoRef} 
+                    remoteVideoRef={remoteVideoRef} 
+                    members={roomSync.members} 
+                    user={user} 
+                    profile={roomSync.profile} 
+                  />
+                </div>
 
-              <ChatSidebar 
-                {...chat} 
-                typingUsers={roomSync.typingUsers} 
-                sendReaction={sendReaction} 
-                callStatus={webrtc.callStatus}
-                startCall={webrtc.startCall}
-                toggleMute={webrtc.toggleMute}
-                toggleVideo={webrtc.toggleVideo}
-                isAudioMuted={webrtc.isAudioMuted}
-                isVideoEnabled={webrtc.isVideoEnabled}
-                user={user}
-              />
-            </div>
+                <ChatSidebar 
+                  {...chat} 
+                  typingUsers={roomSync.typingUsers} 
+                  sendReaction={sendReaction} 
+                  callStatus={webrtc.callStatus}
+                  startCall={webrtc.startCall}
+                  toggleMute={webrtc.toggleMute}
+                  toggleVideo={webrtc.toggleVideo}
+                  isAudioMuted={webrtc.isAudioMuted}
+                  isVideoEnabled={webrtc.isVideoEnabled}
+                  user={user}
+                  />              </div>
+            )}
           </div>
         </div>
       </div>

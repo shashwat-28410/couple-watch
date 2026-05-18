@@ -95,7 +95,6 @@ export function CallOverlay({
                 {(profile?.full_name || user?.email?.split('@')[0] || "Y")[0]}
               </div>
             </div>
-            <span className="text-[10px] font-black uppercase tracking-widest text-[#8B8B9A]">{profile?.full_name || "You"}</span>
           </div>
           <div className="flex flex-col items-center gap-4">
             <div className={`w-24 h-24 rounded-full border-2 p-1.5 transition-all duration-500 ${callStatus === "CONNECTED" ? "border-[#881337] shadow-[0_0_30px_rgba(136,19,55,0.3)]" : "border-white/10 animate-pulse"}`}>
@@ -103,7 +102,6 @@ export function CallOverlay({
                 {(remoteMember?.profiles?.full_name || "P")[0]}
               </div>
             </div>
-            <span className="text-[10px] font-black uppercase tracking-widest text-[#8B8B9A]">{remoteMember?.profiles?.full_name || "Partner"}</span>
           </div>
         </div>
         <div className="flex items-center gap-6">
@@ -126,7 +124,6 @@ export function CallOverlay({
           {callStatus !== "CONNECTED" && (<div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0D0D12]"><div className="w-10 h-10 border-2 border-[#881337]/20 border-t-[#BE123C] rounded-full animate-spin mb-3"></div><span className="text-[8px] font-black uppercase tracking-widest text-[#881337]/60">Connecting...</span></div>)}
           <div className="absolute top-3 left-3 px-2 py-1 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center gap-1.5 z-20">
             <div className={`w-1 h-1 rounded-full ${callStatus === "CONNECTED" ? "bg-green-500" : "bg-yellow-500 animate-pulse"}`}></div>
-            <span className="text-[7px] font-black uppercase text-white tracking-widest">{remoteMember?.profiles?.full_name || "Partner"}</span>
           </div>
         </div>
         <div className="flex-1 rounded-[18px] bg-black border border-[#BE123C]/20 overflow-hidden relative shadow-2xl transition-all">
@@ -134,7 +131,6 @@ export function CallOverlay({
           {!isVideoEnabled && <div className="absolute inset-0 flex items-center justify-center bg-[#0D0D12]"><span className="text-[8px] font-black uppercase text-white/30 tracking-widest">Camera Off</span></div>}
           <div className="absolute top-3 left-3 px-2 py-1 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center gap-1.5 z-20">
             <div className="w-1 h-1 rounded-full bg-green-500"></div>
-            <span className="text-[7px] font-black uppercase text-white tracking-widest">{profile?.full_name || "You"}</span>
           </div>
         </div>
       </div>

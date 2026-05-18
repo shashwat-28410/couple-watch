@@ -24,48 +24,43 @@ export function useRoomSync(user, code, navigate) {
       try {
         const { data: { user: authUser } } = await supabase.auth.getUser();
         if (!authUser) { navigate("/", { replace: true }); return; }
-        
-        const { data: prof } = await supabase.from("profiles").select("full_name").eq("id", authUser.id).single();
-        if (prof) setProfile(prof);
 
-        const { data: roomData } = await supabase.from("rooms").select("*").eq("room_code", code).single();
-        if (!roomData) { navigate("/", { replace: true }); return; }
-        setRoom(roomData);
-
-        const { data: existingMember } = await supabase.from("room_members")
-          .select("*")
-          .eq("room_id", roomData.id)
-          .eq("user_id", authUser.id)
-          .maybeSingle();
-
-        if (!existingMember) {
-          await supabase.from("room_members").insert([{ 
-            room_id: roomData.id, 
-            user_id: authUser.id, 
-            role: roomData.created_by === authUser.id ? "host" : "member" 
-          }]);
-        }
-
-        const [stateRes, membersRes] = await Promise.all([
-          supabase.from("room_state").select("*").eq("room_id", roomData.id).maybeSingle(),
-          supabase.from("room_members").select("id, role, user_id, profiles(full_name)").eq("room_id", roomData.id)
+        // FAST PATH: Parallel fetch room, state, and profile
+        const [roomRes, profileRes] = await Promise.all([
+          supabase.from("rooms").select("*, room_state(*), room_members(id, role, user_id, profiles(full_name))").eq("room_code", code).single(),
+          supabase.from("profiles").select("full_name").eq("id", authUser.id).single()
         ]);
 
-        if (stateRes.data) setRoomState(stateRes.data);
-        
-        let hostStatus = false;
-        if (membersRes.data) {
-          setMembers(membersRes.data);
-          const current = membersRes.data.find(m => m.user_id === authUser.id);
-          if (current) hostStatus = current.role === "host";
+        const roomData = roomRes.data;
+        if (!roomData) { navigate("/", { replace: true }); return; }
+
+        if (profileRes.data) setProfile(profileRes.data);
+        setRoom(roomData);
+        if (roomData.room_state?.[0]) setRoomState(roomData.room_state[0]);
+        if (roomData.room_members) setMembers(roomData.room_members);
+
+        const isUserHost = roomData.created_by === authUser.id;
+        setIsHost(isUserHost);
+        isHostRef.current = isUserHost;
+
+        // Background: Ensure member entry exists (don't wait for it to join)
+        const isAlreadyMember = roomData.room_members?.some(m => m.user_id === authUser.id);
+        if (!isAlreadyMember) {
+          supabase.from("room_members").insert([{ 
+            room_id: roomData.id, 
+            user_id: authUser.id, 
+            role: isUserHost ? "host" : "member" 
+          }]).then(() => {
+             // Refresh members list silently
+             supabase.from("room_members").select("id, role, user_id, profiles(full_name)").eq("room_id", roomData.id).then(res => {
+               if (res.data) setMembers(res.data);
+             });
+          });
         }
-        if (!hostStatus && roomData.created_by === authUser.id) hostStatus = true;
-        
-        setIsHost(hostStatus);
-        isHostRef.current = hostStatus;
+
         setIsInitializing(false);
       } catch (err) {
-        console.error("Init Room Error:", err);
+        console.error("Fast Join Error:", err);
         navigate("/", { replace: true });
       }
     }

@@ -78,10 +78,24 @@ export default function Home() {
     try {
       const { data: { user: authUser } } = await supabase.auth.getUser();
       if (!authUser) throw new Error("Please log in first ❤️");
+      
       const code = generateRoomCode();
-      const { data: room } = await supabase.from("rooms").insert([{ room_code: code, created_by: authUser.id }]).select().single();
-      await supabase.from("room_members").insert([{ room_id: room.id, user_id: authUser.id, role: "host" }]);
-      await supabase.from("room_state").insert([{ room_id: room.id, is_playing: false, current_timestamp_seconds: 0 }]);
+      
+      // STEP 1: Fast room creation
+      const { data: room, error } = await supabase.from("rooms")
+        .insert([{ room_code: code, created_by: authUser.id }])
+        .select().single();
+      
+      if (error || !room) throw new Error("Failed to create room");
+
+      // STEP 2: Parallel background tasks (don't block navigation if possible)
+      // Note: We need room.id for these, so we do them immediately after STEP 1
+      Promise.all([
+        supabase.from("room_members").insert([{ room_id: room.id, user_id: authUser.id, role: "host" }]),
+        supabase.from("room_state").insert([{ room_id: room.id, is_playing: false, current_timestamp_seconds: 0 }])
+      ]);
+
+      // FAST NAVIGATE: Go to room as soon as it exists
       navigate(`/room/${code}`);
     } catch (err) {
       setErrorMsg(err.message);
@@ -103,19 +117,7 @@ export default function Home() {
       const { data: { user: authUser } } = await supabase.auth.getUser();
       if (!authUser) throw new Error("Please log in first ❤️");
       
-      const { data: room, error: roomError } = await supabase.from("rooms").select("*").eq("room_code", code).maybeSingle();
-      if (roomError || !room) throw new Error("Room not found");
-      
-      const { data: existingMember } = await supabase.from("room_members")
-        .select("*")
-        .eq("room_id", room.id)
-        .eq("user_id", authUser.id)
-        .maybeSingle();
-
-      if (!existingMember) {
-        await supabase.from("room_members").insert([{ room_id: room.id, user_id: authUser.id, role: "member" }]);
-      }
-      
+      // FAST PATH: Navigate immediately and let useRoomSync handle the rest
       navigate(`/room/${code}`);
     } catch (err) {
       setErrorMsg(err.message);
