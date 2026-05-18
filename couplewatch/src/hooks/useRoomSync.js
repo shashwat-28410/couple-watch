@@ -39,6 +39,18 @@ export function useRoomSync(user, code, navigate) {
           .maybeSingle();
 
         if (!existingMember) {
+          // Enforce 2-person limit in room_members before joining
+          const { count } = await supabase
+            .from("room_members")
+            .select("*", { count: "exact", head: true })
+            .eq("room_id", roomData.id);
+
+          if (count >= 2) {
+            alert("Room is full 💔 Only 2 people can watch together.");
+            navigate("/", { replace: true });
+            return;
+          }
+
           await supabase.from("room_members").insert([{ 
             room_id: roomData.id, 
             user_id: authUser.id, 

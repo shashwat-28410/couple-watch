@@ -2,27 +2,10 @@ import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import Navbar from "../components/Navbar";
-
-const FloatingHearts = () => {
-  const [hearts] = useState(() => Array.from({ length: 15 }).map((_, i) => ({
-    id: i,
-    left: Math.random() * 100 + "%",
-    delay: Math.random() * 15 + "s",
-    duration: 10 + Math.random() * 10 + "s",
-    size: 10 + Math.random() * 20 + "px"
-  })));
-
-  return (
-    <div className="absolute inset-0 overflow-hidden pointer-events-none">
-      {hearts.map(h => (
-        <span key={h.id} className="heart-particle" style={{ left: h.left, animationDelay: h.delay, animationDuration: h.duration, fontSize: h.size }}>♡</span>
-      ))}
-    </div>
-  );
-};
+import { FloatingHearts } from "../components/FloatingHearts";
 
 const IconHeart = () => (
-  <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
+  <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="currentColor" className="text-white"><path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/></svg>
 );
 
 const IconSync = () => (
@@ -78,10 +61,24 @@ export default function Home() {
     try {
       const { data: { user: authUser } } = await supabase.auth.getUser();
       if (!authUser) throw new Error("Please log in first ❤️");
+      
       const code = generateRoomCode();
-      const { data: room } = await supabase.from("rooms").insert([{ room_code: code, created_by: authUser.id }]).select().single();
-      await supabase.from("room_members").insert([{ room_id: room.id, user_id: authUser.id, role: "host" }]);
-      await supabase.from("room_state").insert([{ room_id: room.id, is_playing: false, current_timestamp_seconds: 0 }]);
+      
+      // STEP 1: Fast room creation
+      const { data: room, error } = await supabase.from("rooms")
+        .insert([{ room_code: code, created_by: authUser.id }])
+        .select().single();
+      
+      if (error || !room) throw new Error("Failed to create room");
+
+      // STEP 2: Parallel background tasks (don't block navigation if possible)
+      // Note: We need room.id for these, so we do them immediately after STEP 1
+      Promise.all([
+        supabase.from("room_members").insert([{ room_id: room.id, user_id: authUser.id, role: "host" }]),
+        supabase.from("room_state").insert([{ room_id: room.id, is_playing: false, current_timestamp_seconds: 0 }])
+      ]);
+
+      // FAST NAVIGATE: Go to room as soon as it exists
       navigate(`/room/${code}`);
     } catch (err) {
       setErrorMsg(err.message);
@@ -103,27 +100,7 @@ export default function Home() {
       const { data: { user: authUser } } = await supabase.auth.getUser();
       if (!authUser) throw new Error("Please log in first ❤️");
       
-      const { data: room, error: roomError } = await supabase.from("rooms").select("*").eq("room_code", code).maybeSingle();
-      if (roomError || !room) throw new Error("Room not found");
-      
-      const { data: existingMember } = await supabase.from("room_members")
-        .select("*")
-        .eq("room_id", room.id)
-        .eq("user_id", authUser.id)
-        .maybeSingle();
-
-      if (!existingMember) {
-        // Enforce 2-person limit — count current members before inserting
-        const { count } = await supabase
-          .from("room_members")
-          .select("*", { count: "exact", head: true })
-          .eq("room_id", room.id);
-
-        if (count >= 2) throw new Error("Room is full 💔 Only 2 people can watch together.");
-
-        await supabase.from("room_members").insert([{ room_id: room.id, user_id: authUser.id, role: "member" }]);
-      }
-      
+      // FAST PATH: Navigate immediately and let useRoomSync handle the rest
       navigate(`/room/${code}`);
     } catch (err) {
       setErrorMsg(err.message);

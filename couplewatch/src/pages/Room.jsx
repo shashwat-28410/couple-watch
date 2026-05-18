@@ -29,6 +29,7 @@ export default function Room() {
   const [videoUrlInput, setVideoUrlInput] = useState("");
   const [floatingReactions, setFloatingReactions] = useState([]);
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [isTheaterMode, setIsTheaterMode] = useState(false);
 
   // ── Feature 2: Host Transfer ──
   const [showTransferModal, setShowTransferModal] = useState(false);
@@ -426,6 +427,7 @@ export default function Room() {
       }
     }
 
+    if (webrtc.screenStream) webrtc.stopScreenShare();
     webrtc.endCall(true);
     navigate("/");
   };
@@ -442,6 +444,9 @@ export default function Room() {
       </div>
     );
   }
+
+  // Only show sidebar if theater mode is inactive
+  const showSidebar = !isTheaterMode;
 
   return (
     <div className="min-h-screen bg-[#0A0A0F] text-white flex flex-col font-sans overflow-hidden">
@@ -492,7 +497,13 @@ export default function Room() {
                 floatingReactions={floatingReactions}
                 isFullScreen={isFullScreen}
                 toggleFullScreen={toggleFullScreen}
+                isTheaterMode={isTheaterMode}
+                setIsTheaterMode={setIsTheaterMode}
                 containerRef={containerRef}
+                callType={webrtc.callType}
+                screenStream={webrtc.screenStream}
+                remoteScreenStream={webrtc.remoteScreenStream}
+                sendRemoteSignal={channelRef.current?.send}
               >
                 {isFullScreen && (
                   <DraggablePartnerVideo 
@@ -503,54 +514,85 @@ export default function Room() {
                 )}
               </VideoPlayer>
               
-              <div className="p-8 border-t border-white/5 bg-white/[0.01] rounded-b-[22px] animate-in fade-in duration-1000">
+              <div className="p-8 border-t border-white/5 bg-white/[0.01] rounded-b-[22px]">
                 {roomSync.isHost ? (
-                  <div className="flex flex-col md:flex-row gap-4">
-                    <input type="text" value={videoUrlInput} onChange={(e) => setVideoUrlInput(e.target.value)} placeholder="PASTE DIRECT MP4 LINK..." className="romantic-input flex-1 text-center font-bold tracking-[0.1em] placeholder:text-[#33334A] focus:scale-[1.01]" />
-                    <button onClick={handleSetVideoUrl} className="pill-button bg-primary-gradient px-12 text-white">SET VIDEO</button>
+                  <div className="flex flex-col gap-6">
+                    <div className="flex flex-col md:flex-row gap-4">
+                      <input type="text" value={videoUrlInput} onChange={(e) => setVideoUrlInput(e.target.value)} placeholder="PASTE DIRECT MP4 LINK..." className="romantic-input flex-1 text-center font-bold tracking-[0.1em] placeholder:text-[#33334A] focus:scale-[1.01]" />
+                      <button onClick={handleSetVideoUrl} className="pill-button bg-primary-gradient px-12 text-white">SET VIDEO</button>
+                    </div>
+
+                    <div className="flex items-center justify-center gap-4">
+                      <div className="h-px bg-white/5 flex-1"></div>
+                      <span className="text-[10px] font-black text-[#33334A] uppercase tracking-[0.3em]">OR SCREEN SHARE</span>
+                      <div className="h-px bg-white/5 flex-1"></div>
+                    </div>
+
+                    <div className="flex justify-center">
+                      <button 
+                        onClick={() => webrtc.screenStream ? webrtc.stopScreenShare() : webrtc.startScreenShare()} 
+                        className={`px-6 py-3 rounded-full text-[10px] font-black uppercase tracking-[0.2em] transition-all duration-300 active:scale-95 border ${
+                          webrtc.screenStream 
+                          ? 'bg-[#881337] text-white border-[#881337]' 
+                          : 'bg-white/5 border-white/10 text-white/60 hover:text-white hover:border-white/20'
+                        }`}
+                      >
+                        {webrtc.screenStream ? 'STOP SHARING' : 'SHARE A CINEMA TAB'}
+                      </button>
+                    </div>
                   </div>
                 ) : (
                   <div className="flex flex-col items-center gap-8">
-                    <button onClick={handleForceSync} className="pill-button bg-white/5 border border-white/10 px-12 text-[10px] font-black tracking-[0.2em]">🔄 FORCE SYNC</button>
+                    {webrtc.remoteScreenStream ? (
+                      <div className="flex flex-col items-center gap-2">
+                        <div className="flex items-center gap-3 px-6 py-2 rounded-full bg-rose-500/10 border border-rose-500/20 text-rose-500 text-[10px] font-black uppercase tracking-widest animate-pulse">
+                          <span className="w-2 h-2 rounded-full bg-rose-500 shadow-[0_0_8px_#f43f5e]"></span>
+                          Watching Partner's Screen
+                        </div>
+                        <p className="text-[9px] font-bold text-[#33334A] uppercase tracking-widest">Everything is perfectly synced by magic</p>
+                      </div>
+                    ) : (
+                      <button onClick={handleForceSync} className="pill-button bg-white/5 border border-white/10 px-12 text-[10px] font-black tracking-[0.2em]">🔄 FORCE SYNC</button>
+                    )}
                   </div>
                 )}
               </div>
             </div>
 
-            <div className="w-full lg:w-[400px] flex flex-col gap-6 h-[850px] animate-in slide-in-from-right-6 duration-700">
-              <PresenceList 
-                members={roomSync.members} 
-                onlineUsers={roomSync.onlineUsers} 
-                isHost={roomSync.isHost} 
-                onTransfer={() => setShowTransferModal(true)} 
-              />
-              
-              <div className="bg-[#0D0D12] backdrop-blur-2xl border border-[#881337]/30 rounded-[22px] min-h-[340px] shadow-2xl overflow-hidden">
-                <CallOverlay 
-                  {...webrtc} 
-                  localVideoRef={localVideoRef} 
-                  remoteVideoRef={remoteVideoRef} 
-                  remoteStream={webrtc.remoteStream}
-                  localStream={webrtc.localStream}
+            {showSidebar && (
+              <div className="w-full lg:w-[400px] flex flex-col gap-6 h-[850px] animate-in fade-in slide-in-from-right-10 duration-500">
+                <PresenceList 
                   members={roomSync.members} 
-                  user={user} 
-                  profile={roomSync.profile} 
+                  onlineUsers={roomSync.onlineUsers} 
+                  isHost={roomSync.isHost} 
+                  onTransfer={() => setShowTransferModal(true)} 
+                />
+                
+                <div className="bg-[#0D0D12] backdrop-blur-2xl border border-[#881337]/30 rounded-[22px] min-h-[340px] shadow-2xl overflow-hidden">
+                  <CallOverlay 
+                    {...webrtc} 
+                    localVideoRef={localVideoRef} 
+                    remoteVideoRef={remoteVideoRef} 
+                    members={roomSync.members} 
+                    user={user} 
+                    profile={roomSync.profile} 
+                  />
+                </div>
+
+                <ChatSidebar 
+                  {...chat} 
+                  typingUsers={roomSync.typingUsers} 
+                  sendReaction={sendReaction} 
+                  callStatus={webrtc.callStatus}
+                  startCall={webrtc.startCall}
+                  toggleMute={webrtc.toggleMute}
+                  toggleVideo={webrtc.toggleVideo}
+                  isAudioMuted={webrtc.isAudioMuted}
+                  isVideoEnabled={webrtc.isVideoEnabled}
+                  user={user}
                 />
               </div>
-
-              <ChatSidebar 
-                {...chat} 
-                typingUsers={roomSync.typingUsers} 
-                sendReaction={sendReaction} 
-                callStatus={webrtc.callStatus}
-                startCall={webrtc.startCall}
-                toggleMute={webrtc.toggleMute}
-                toggleVideo={webrtc.toggleVideo}
-                isAudioMuted={webrtc.isAudioMuted}
-                isVideoEnabled={webrtc.isVideoEnabled}
-                user={user}
-              />
-            </div>
+            )}
           </div>
         </div>
       </div>
