@@ -89,11 +89,14 @@ export default function Room() {
     }
   }, [webrtc.pendingOffer, webrtc.joinIncomingCall]);
 
-  // We need a stable reference to webrtc.handleWebRTCSignal for the event listener
+  // We need stable references for the event listener
   const handleWebRTCSignalRef = useRef(webrtc.handleWebRTCSignal);
+  const reBroadcastScreenOfferRef = useRef(webrtc.reBroadcastScreenOffer);
+
   useEffect(() => {
     handleWebRTCSignalRef.current = webrtc.handleWebRTCSignal;
-  }, [webrtc.handleWebRTCSignal]);
+    reBroadcastScreenOfferRef.current = webrtc.reBroadcastScreenOffer;
+  }, [webrtc.handleWebRTCSignal, webrtc.reBroadcastScreenOffer]);
 
   // Audio Stream Attachment (Keep here as it's a global hidden element)
   useEffect(() => { 
@@ -162,6 +165,8 @@ export default function Room() {
               event: "sync-event", 
               payload: { ...roomSync.roomStateRef.current, current_timestamp_seconds: playerRef.current.currentTime, force: true } 
             });
+            // Re-offer screen share if active
+            reBroadcastScreenOfferRef.current();
           }
         })
         .on("presence", { event: "sync" }, () => {

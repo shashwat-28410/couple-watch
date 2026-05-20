@@ -427,6 +427,32 @@ export function useWebRTC(user, channelRef) {
     }
   };
 
+  const reBroadcastScreenOffer = useCallback(async () => {
+    if (localScreenStreamRef.current && channelRef.current && user) {
+      const pc = createPeerConnection(true);
+      localScreenStreamRef.current.getTracks().forEach(track => pc.addTrack(track, localScreenStreamRef.current));
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      channelRef.current.send({ 
+        type: "broadcast", 
+        event: "webrtc-signal", 
+        payload: { 
+          type: "offer", 
+          sdp: offer, 
+          senderId: user.id, 
+          callType: 'screen' 
+        } 
+      });
+    }
+  }, [user, channelRef, createPeerConnection]);
+
+  // Auto-join screen share offers when they arrive
+  useEffect(() => {
+    if (pendingOffer && pendingOffer.incomingType === 'screen') {
+      joinIncomingCall();
+    }
+  }, [pendingOffer, joinIncomingCall]);
+
   return {
     callStatus,
     callType,
@@ -439,6 +465,7 @@ export function useWebRTC(user, channelRef) {
     pendingOffer,
     startCall,
     startScreenShare,
+    reBroadcastScreenOffer,
     stopScreenShare,
     endCall,
     joinIncomingCall,
