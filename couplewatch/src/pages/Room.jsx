@@ -510,7 +510,7 @@ export default function Room() {
                 remoteScreenStream={webrtc.remoteScreenStream}
                 sendRemoteSignal={channelRef.current?.send}
               >
-                {isFullScreen && (
+                {(isFullScreen || isTheaterMode) && (
                   <DraggablePartnerVideo 
                     remoteStream={webrtc.remoteStream}
                     callStatus={webrtc.callStatus}
