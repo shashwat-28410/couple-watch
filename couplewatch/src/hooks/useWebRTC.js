@@ -133,7 +133,9 @@ export function useWebRTC(user, channelRef) {
         { urls: "stun:stun2.l.google.com:19302" },
         { urls: "stun:stun3.l.google.com:19302" },
         { urls: "stun:stun4.l.google.com:19302" }
-      ] 
+      ],
+      bundlePolicy: "max-bundle",
+      rtcpMuxPolicy: "require"
     });
     
     pc.onicecandidate = (event) => {
@@ -179,6 +181,44 @@ export function useWebRTC(user, channelRef) {
     pcRef.current = pc;
     return pc;
   }, [user, channelRef, endCall]);
+
+  const optimizeSDP = (sdp, isScreen = false) => {
+    let lines = sdp.split('\r\n');
+    
+    // 1. Prioritize H264 for hardware acceleration smoothness
+    const mVideoIndex = lines.findIndex(line => line.startsWith('m=video'));
+    if (mVideoIndex !== -1) {
+      const parts = lines[mVideoIndex].split(' ');
+      const payloadTypes = parts.slice(3);
+      const h264Types = [];
+      lines.forEach(line => {
+        if (line.startsWith('a=rtpmap:') && line.includes('H264')) {
+          const match = line.match(/a=rtpmap:(\d+)/);
+          if (match) h264Types.push(match[1]);
+        }
+      });
+
+      if (h264Types.length > 0) {
+        const newPayloadTypes = [...h264Types, ...payloadTypes.filter(t => !h264Types.includes(t))];
+        parts.splice(3, payloadTypes.length, ...newPayloadTypes);
+        lines[mVideoIndex] = parts.join(' ');
+      }
+    }
+
+    // 2. Add Bitrate and Quality flags
+    let newSdp = lines.join('\r\n');
+    if (isScreen) {
+      newSdp = newSdp.replace(/b=AS:([0-9]+)/g, 'b=AS:15000');
+      newSdp = newSdp.replace(/b=TIAS:([0-9]+)/g, 'b=TIAS:15000000');
+      if (!newSdp.includes('b=AS:')) {
+        newSdp = newSdp.replace(/a=mid:video/g, 'a=mid:video\r\nb=AS:15000\r\nb=TIAS:15000000');
+      }
+      // Chrome-specific flags for instant high quality and stability
+      newSdp = newSdp.replace(/a=fmtp:(.*)/g, 'a=fmtp:$1;x-google-min-bitrate=8000;x-google-max-bitrate=15000;x-google-start-bitrate=12000;googLowDelayAudio=true;googHighStartBitrate=true');
+    }
+    
+    return newSdp;
+  };
 
   const startCall = useCallback(async (type) => {
     if (!channelRef.current || !user || isStoppingRef.current) return;
@@ -247,34 +287,60 @@ export function useWebRTC(user, channelRef) {
           frameRate: { ideal: 60, max: 60 }
         },
         audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-          channelCount: 2 // Stereo for movies
+          echoCancellation: false, // Better movie audio quality
+          noiseSuppression: false,
+          autoGainControl: false,
+          channelCount: 2
         }
       });
 
-      // Optimize for high detail (sharp text and video)
+      // Optimize for motion (smooth frame rate for movies)
       const videoTrack = stream.getVideoTracks()[0];
       if (videoTrack && 'contentHint' in videoTrack) {
-        videoTrack.contentHint = 'detail';
+        videoTrack.contentHint = 'motion';
       }
 
       localScreenStreamRef.current = stream;
       setScreenStream(stream);
       
       const pc = createPeerConnection(true);
-      stream.getTracks().forEach(track => pc.addTrack(track, stream));
+      
+      // Add tracks and set sender parameters for max quality
+      for (const track of stream.getTracks()) {
+        const sender = pc.addTrack(track, stream);
+        if (track.kind === 'video') {
+          try {
+            const params = sender.getParameters();
+            if (!params.encodings) params.encodings = [{}];
+            params.encodings[0].maxBitrate = 15000000; // 15 Mbps
+            params.encodings[0].maxFramerate = 60;
+            params.encodings[0].networkPriority = 'high';
+            sender.setParameters(params);
+            
+            if ('degradationPreference' in sender) {
+              sender.degradationPreference = 'maintain-framerate'; // Prioritize smoothness
+            }
+          } catch (e) {
+            console.warn("Could not set sender parameters:", e);
+          }
+        }
+      }
 
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: false,
+        offerToReceiveVideo: false,
+      });
+
+      const sdp = optimizeSDP(offer.sdp, true);
+      const finalizedOffer = { type: 'offer', sdp };
+      await pc.setLocalDescription(finalizedOffer);
 
       channelRef.current.send({ 
         type: "broadcast", 
         event: "webrtc-signal", 
         payload: { 
           type: "offer", 
-          sdp: offer, 
+          sdp: finalizedOffer, 
           senderId: user.id, 
           callType: 'screen' 
         } 
@@ -294,7 +360,7 @@ export function useWebRTC(user, channelRef) {
   const joinIncomingCall = useCallback(async () => {
     if (!pendingOffer || !channelRef.current || !user || isStoppingRef.current) return;
     const type = pendingOffer.incomingType;
-    const sdp = pendingOffer.sdp;
+    const sdpOffer = pendingOffer.sdp;
     setPendingOffer(null); // Clear immediately to avoid loops
     const isScreen = type === 'screen';
     console.log(`Joining incoming ${isScreen ? 'screen' : 'call'}:`, type);
@@ -311,9 +377,6 @@ export function useWebRTC(user, channelRef) {
         setCallType(type); 
         setCallStatus("CONNECTED");
         if (type === 'video') setIsVideoEnabled(true);
-      } else {
-        // For screen share, the receiver doesn't necessarily send a stream back,
-        // but WebRTC often expects an answer. We'll create an answer-only PC.
       }
 
       const pc = createPeerConnection(isScreen);
@@ -321,16 +384,19 @@ export function useWebRTC(user, channelRef) {
         stream.getTracks().forEach(track => pc.addTrack(track, stream));
       }
 
-      await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+      await pc.setRemoteDescription(new RTCSessionDescription(sdpOffer));
       const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
+      
+      const sdp = optimizeSDP(answer.sdp, isScreen);
+      const finalizedAnswer = { type: 'answer', sdp };
+      await pc.setLocalDescription(finalizedAnswer);
 
       channelRef.current.send({ 
         type: "broadcast", 
         event: "webrtc-signal", 
         payload: { 
           type: "answer", 
-          sdp: answer, 
+          sdp: finalizedAnswer, 
           senderId: user.id,
           isScreen
         } 
@@ -430,15 +496,43 @@ export function useWebRTC(user, channelRef) {
   const reBroadcastScreenOffer = useCallback(async () => {
     if (localScreenStreamRef.current && channelRef.current && user) {
       const pc = createPeerConnection(true);
-      localScreenStreamRef.current.getTracks().forEach(track => pc.addTrack(track, localScreenStreamRef.current));
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
+      
+      // Add tracks and set sender parameters for max quality
+      for (const track of localScreenStreamRef.current.getTracks()) {
+        const sender = pc.addTrack(track, localScreenStreamRef.current);
+        if (track.kind === 'video') {
+          try {
+            const params = sender.getParameters();
+            if (!params.encodings) params.encodings = [{}];
+            params.encodings[0].maxBitrate = 15000000; // 15 Mbps
+            params.encodings[0].maxFramerate = 60;
+            params.encodings[0].networkPriority = 'high';
+            sender.setParameters(params);
+            
+            if ('degradationPreference' in sender) {
+              sender.degradationPreference = 'maintain-framerate';
+            }
+          } catch (e) {
+            console.warn("Could not set sender parameters:", e);
+          }
+        }
+      }
+
+      const offer = await pc.createOffer({
+        offerToReceiveAudio: false,
+        offerToReceiveVideo: false,
+      });
+
+      const sdp = optimizeSDP(offer.sdp, true);
+      const finalizedOffer = { type: 'offer', sdp };
+      await pc.setLocalDescription(finalizedOffer);
+
       channelRef.current.send({ 
         type: "broadcast", 
         event: "webrtc-signal", 
         payload: { 
           type: "offer", 
-          sdp: offer, 
+          sdp: finalizedOffer, 
           senderId: user.id, 
           callType: 'screen' 
         } 
