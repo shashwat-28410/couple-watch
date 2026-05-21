@@ -53,7 +53,7 @@ export function DraggablePartnerVideo({ remoteVideoRef, remoteStream, callStatus
   return (
     <div 
       ref={dragRef}
-      className="draggable-video absolute z-[60] w-48 aspect-video rounded-xl overflow-hidden border-2 border-[#881337] shadow-2xl cursor-move select-none"
+      className={`draggable-video absolute z-[100] cursor-move select-none pointer-events-auto ${isDragging ? '' : 'transition-all duration-300'} w-48 h-32 md:w-64 md:h-44 rounded-2xl overflow-hidden border border-[#881337]/40 shadow-2xl bg-[#0D0D12] group/overlay`}
       style={{ 
         left: `${position.x}px`, 
         top: `${position.y}px`,

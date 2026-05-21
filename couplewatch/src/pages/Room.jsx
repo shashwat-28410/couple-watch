@@ -314,8 +314,7 @@ export default function Room() {
                 remoteScreenStream={webrtc.remoteScreenStream}
                 sendRemoteSignal={sendRemoteSignal}
               >
-                {/* Always show draggable video if any cinema mode or call is active */}
-                {(isAnyCinemaActive || webrtc.callStatus === "CONNECTED") && (
+                {(isFullScreen || isTheaterMode) && (
                   <DraggablePartnerVideo 
                     remoteVideoRef={remoteVideoRef}
                     remoteStream={webrtc.remoteStream}
