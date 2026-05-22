@@ -67,7 +67,6 @@ export function VideoPlayer({
       }
     }
   }, [hasInteracted, isScreenShare, roomState?.is_playing]);
-
   // Reset pan offset if zoom is reset
   useEffect(() => {
     if (zoomLevel <= 1) {

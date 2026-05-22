@@ -92,6 +92,13 @@ export default function Room() {
 
   const [lastSignalTime, setLastSignalTime] = useState(null);
 
+  // Auto-join screen share calls
+  useEffect(() => {
+    if (webrtc.pendingOffer?.incomingType === 'screen') {
+      webrtc.joinIncomingCall();
+    }
+  }, [webrtc.pendingOffer, webrtc.joinIncomingCall]);
+
   // We need stable references for the event listener
   const handleWebRTCSignalRef = useRef(webrtc.handleWebRTCSignal);
   const reBroadcastScreenOfferRef = useRef(webrtc.reBroadcastScreenOffer);

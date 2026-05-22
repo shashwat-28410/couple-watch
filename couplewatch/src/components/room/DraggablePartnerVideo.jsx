@@ -75,7 +75,7 @@ export function DraggablePartnerVideo({ remoteStream, callStatus, partnerName })
   return (
     <div 
       ref={dragRef}
-      className={`absolute z-[100] pointer-events-auto ${isDragging ? '' : 'transition-all duration-300'} ${
+      className={`draggable-video absolute z-[100] cursor-move select-none pointer-events-auto ${isDragging ? '' : 'transition-all duration-300'} ${
         isMinimized ? 'w-10 h-10' : 'w-48 h-32 md:w-64 md:h-44'
       } rounded-2xl overflow-hidden border border-[#881337]/40 shadow-2xl bg-[#0D0D12] group/overlay`}
       style={{ 

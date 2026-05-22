@@ -200,7 +200,7 @@ export function useWebRTC(user, channelRef) {
   const optimizeSDP = (sdp, isScreen = false) => {
     let lines = sdp.split('\r\n');
     
-    // Prioritize H264 but keep it simple to avoid oversized packets
+    // 1. Prioritize H264 for hardware acceleration smoothness
     const mVideoIndex = lines.findIndex(line => line.startsWith('m=video'));
     if (mVideoIndex !== -1) {
       const parts = lines[mVideoIndex].split(' ');
@@ -214,20 +214,25 @@ export function useWebRTC(user, channelRef) {
       });
 
       if (h264Types.length > 0) {
-        const others = payloadTypes.filter(t => !h264Types.includes(t));
-        lines[mVideoIndex] = parts.slice(0, 3).concat(h264Types, others).join(' ');
+        const newPayloadTypes = [...h264Types, ...payloadTypes.filter(t => !h264Types.includes(t))];
+        parts.splice(3, payloadTypes.length, ...newPayloadTypes);
+        lines[mVideoIndex] = parts.join(' ');
       }
     }
 
-    // Moderate bitrate for screen share to fit in Supabase's 30kb limit
+    // 2. Add Bitrate and Quality flags
+    let newSdp = lines.join('\r\n');
     if (isScreen) {
-      const videoMidIndex = lines.findIndex(line => line.includes('a=mid:video'));
-      if (videoMidIndex !== -1) {
-        lines.splice(videoMidIndex + 1, 0, 'b=AS:3000'); // 3Mbps is plenty and safer
+      newSdp = newSdp.replace(/b=AS:([0-9]+)/g, 'b=AS:15000');
+      newSdp = newSdp.replace(/b=TIAS:([0-9]+)/g, 'b=TIAS:15000000');
+      if (!newSdp.includes('b=AS:')) {
+        newSdp = newSdp.replace(/a=mid:video/g, 'a=mid:video\r\nb=AS:15000\r\nb=TIAS:15000000');
       }
+      // Chrome-specific flags for instant high quality and stability
+      newSdp = newSdp.replace(/a=fmtp:(.*)/g, 'a=fmtp:$1;x-google-min-bitrate=8000;x-google-max-bitrate=15000;x-google-start-bitrate=12000;googLowDelayAudio=true;googHighStartBitrate=true');
     }
     
-    return lines.join('\r\n');
+    return newSdp;
   };
 
   const startCall = useCallback(async (type) => {
