@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import Navbar from "../components/Navbar";
@@ -36,18 +36,6 @@ export default function Room() {
   const [transferring, setTransferring] = useState(false);
   const [toastMsg, setToastMsg] = useState(null);
 
-  // ── Feature 3: Invite Link ──
-  const [inviteCopied, setInviteCopied] = useState(false);
-
-  // ── Feature 4: Watch History ──
-  const [isHistoryEnabled] = useState(() => {
-    const saved = localStorage.getItem("couplewatch_history_enabled");
-    return saved === "true"; // off by default
-  });
-  const watchHistoryIdRef = useRef(null);
-  const historyIntervalRef = useRef(null);
-  const watchStartTimeRef = useRef(null);
-
   // Refs
   const playerRef = useRef(null);
   const remoteVideoRef = useRef(null);
@@ -55,7 +43,6 @@ export default function Room() {
   const remoteAudioRef = useRef(null);
   const reconnectTimeoutRef = useRef(null);
   const containerRef = useRef(null);
-  const inviteTimeoutRef = useRef(null);
 
   const toggleFullScreen = () => {
     if (!containerRef.current) return;
@@ -136,88 +123,8 @@ export default function Room() {
     }
   };
 
-  // ─── Feature 4: Watch History Helpers ─────────────────────
-  const extractVideoTitle = (url) => {
-    try {
-      const pathname = new URL(url).pathname;
-      const filename = pathname.split("/").pop() || "";
-      return decodeURIComponent(filename.replace(/\.[^.]+$/, "").replace(/[-_]/g, " ")) || "Untitled Video";
-    } catch {
-      return "Untitled Video";
-    }
-  };
-
-  const startWatchHistory = useCallback(async (videoUrl, roomData, userId, allMembers) => {
-    if (!roomData?.id || !userId) return;
-    try {
-      // End any previous open session
-      if (watchHistoryIdRef.current) {
-        await supabase
-          .from("watch_history")
-          .update({ ended_at: new Date().toISOString() })
-          .eq("id", watchHistoryIdRef.current);
-      }
-      if (historyIntervalRef.current) clearInterval(historyIntervalRef.current);
-
-      const participants = allMembers.map((m) => m.user_id);
-      if (!participants.includes(userId)) participants.push(userId);
-
-      const { data: row } = await supabase
-        .from("watch_history")
-        .insert([{
-          room_id: roomData.id,
-          video_url: videoUrl,
-          video_title: extractVideoTitle(videoUrl),
-          participants,
-          last_position_seconds: 0,
-          total_watched_seconds: 0,
-        }])
-        .select()
-        .single();
-
-      if (row) {
-        watchHistoryIdRef.current = row.id;
-        watchStartTimeRef.current = Date.now();
-        
-        // Update position and elapsed time in the database every 30 seconds
-        historyIntervalRef.current = setInterval(async () => {
-          if (!playerRef.current || !watchHistoryIdRef.current) return;
-          const elapsed = (Date.now() - (watchStartTimeRef.current || Date.now())) / 1000;
-          await supabase.from("watch_history").update({
-            last_position_seconds: playerRef.current.currentTime,
-            total_watched_seconds: elapsed,
-          }).eq("id", watchHistoryIdRef.current);
-        }, 30000);
-      }
-    } catch (err) {
-      console.error("Watch history start error:", err);
-    }
-  }, []);
-
-  const endWatchHistory = useCallback(async () => {
-    if (!watchHistoryIdRef.current) return;
-    if (historyIntervalRef.current) clearInterval(historyIntervalRef.current);
-    const elapsed = watchStartTimeRef.current
-      ? (Date.now() - watchStartTimeRef.current) / 1000
-      : 0;
-    try {
-      await supabase.from("watch_history").update({
-        ended_at: new Date().toISOString(),
-        last_position_seconds: playerRef.current?.currentTime || 0,
-        total_watched_seconds: elapsed,
-      }).eq("id", watchHistoryIdRef.current);
-    } catch (err) {
-      console.error("Watch history end error:", err);
-    } finally {
-      watchHistoryIdRef.current = null;
-      watchStartTimeRef.current = null;
-    }
-  }, []);
-
   useEffect(() => {
     return () => {
-      if (historyIntervalRef.current) clearInterval(historyIntervalRef.current);
-      if (inviteTimeoutRef.current) clearTimeout(inviteTimeoutRef.current);
     };
   }, []);
 
@@ -364,11 +271,6 @@ export default function Room() {
     roomSync.updateRoomState(payload);
     setVideoUrlInput("");
     setHasInteracted(true);
-
-    // Feature 4: Start watch history session if enabled
-    if (isHistoryEnabled) {
-      startWatchHistory(formattedUrl, room, user.id, roomSync.members);
-    }
   };
 
   // ─── Feature 2: Host Transfer Helper ──────────────────────
@@ -408,27 +310,8 @@ export default function Room() {
     }
   };
 
-  // ─── Feature 3: Invite Link Helper ────────────────────────
-  const copyInviteLink = useCallback(() => {
-    const link = `${window.location.origin}/join/${code}`;
-    navigator.clipboard.writeText(link).then(() => {
-      setInviteCopied(true);
-      setToastMsg("🔗 Invite link copied!");
-      
-      if (inviteTimeoutRef.current) clearTimeout(inviteTimeoutRef.current);
-      inviteTimeoutRef.current = setTimeout(() => {
-        setInviteCopied(false);
-      }, 2500);
-    });
-  }, [code]);
-
   // ─── Feature 2: Leaving Room Auto-Transfer & History Cleanup ─────
   const handleLeaveRoom = async () => {
-    // Feature 4: Persist final watch position before leaving if enabled
-    if (isHistoryEnabled) {
-      await endWatchHistory();
-    }
-
     // Feature 2: Auto-transfer host to partner if host is leaving and partner is online
     if (roomSync.isHost && roomSync.members.length > 1) {
       const partner = roomSync.members.find((m) => m.user_id !== user?.id);
@@ -491,16 +374,6 @@ export default function Room() {
                 <p className="text-[#8B8B9A] text-[11px] font-black tracking-[0.3em] uppercase flex items-center gap-2">
                   Room Code: <span className="text-white bg-white/5 px-3 py-1 rounded-md">{code}</span>
                 </p>
-                <button
-                  onClick={copyInviteLink}
-                  className={`px-3 py-1 text-[9px] font-black uppercase tracking-widest rounded-md border transition-all ${
-                    inviteCopied 
-                      ? 'bg-green-500/20 border-green-500/40 text-green-400' 
-                      : 'bg-white/5 border-white/10 text-white/60 hover:bg-white/10 hover:text-white'
-                  }`}
-                >
-                  {inviteCopied ? '✓ Copied' : '🔗 Invite'}
-                </button>
               </div>
             </div>
             <div className="flex items-center gap-6 self-end md:self-auto">

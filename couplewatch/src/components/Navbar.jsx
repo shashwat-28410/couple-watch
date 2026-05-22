@@ -44,14 +44,6 @@ export default function Navbar({ user }) {
         <div className="flex items-center gap-6">
           {user ? (
             <div className="flex items-center gap-3">
-              {/* History link — only shown when logged in */}
-              <button
-                onClick={() => navigate("/history")}
-                className="text-[#9090A8] text-[10px] font-black uppercase tracking-widest hover:text-white transition-colors"
-              >
-                History
-              </button>
-
               {/* Avatar */}
               <div className="w-10 h-10 rounded-full bg-primary-gradient flex items-center justify-center text-white font-bold shadow-lg">
                 {displayInitial}
