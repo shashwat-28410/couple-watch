@@ -102,9 +102,12 @@ export default function Room() {
   // Audio Stream Attachment (Keep here as it's a global hidden element)
   useEffect(() => { 
     if (webrtc.remoteStream && remoteAudioRef.current) {
-      remoteAudioRef.current.srcObject = webrtc.remoteStream;
+      if (remoteAudioRef.current.srcObject !== webrtc.remoteStream) {
+        remoteAudioRef.current.srcObject = webrtc.remoteStream;
+      }
+      remoteAudioRef.current.play().catch(e => console.warn("Remote audio play error:", e));
     }
-  }, [webrtc.remoteStream]);
+  }, [webrtc.remoteStream, webrtc.callStatus]);
 
   // Floating Reactions Logic
   const triggerReaction = (emoji) => {
@@ -280,6 +283,11 @@ export default function Room() {
               is_typing: false, 
               full_name: prof?.full_name || user.email?.split('@')[0]
             });
+
+            // Auto-request sync on join to get current video and any active screen share
+            if (!roomSync.isHostRef.current) {
+              subChannel.send({ type: "broadcast", event: "request-sync", payload: {} });
+            }
           }
           if (status === "TIMED_OUT" || status === "CLOSED" || status === "CHANNEL_ERROR") {
             if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
