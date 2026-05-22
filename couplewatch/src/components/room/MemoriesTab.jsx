@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { supabase } from "../../lib/supabaseClient";
 
-export function MemoriesTab({ roomId, user }) {
+export function MemoriesTab({ roomId }) {
   const [memories, setMemories] = useState([]);
   const [loading, setLoading] = useState(true);
 

@@ -163,11 +163,9 @@ export function useWebRTC(user, channelRef) {
         const stream = prev || new MediaStream();
         const tracks = incomingStream ? incomingStream.getTracks() : [event.track];
         
-        let changed = false;
         tracks.forEach(t => {
           if (!stream.getTracks().find(existing => existing.id === t.id)) {
             stream.addTrack(t);
-            changed = true;
           }
         });
 

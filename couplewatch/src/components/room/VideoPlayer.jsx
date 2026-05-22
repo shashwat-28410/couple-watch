@@ -13,11 +13,8 @@ export function VideoPlayer({
   isTheaterMode,
   setIsTheaterMode,
   containerRef,
-  callType,
   screenStream,
   remoteScreenStream,
-  sendRemoteSignal, 
-  handleSaveMemory,
   children
 }) {
   const [videoLoading, setVideoLoading] = useState(false);
