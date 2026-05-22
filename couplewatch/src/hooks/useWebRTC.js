@@ -197,47 +197,68 @@ export function useWebRTC(user, channelRef) {
 
   const optimizeSDP = (sdp, isScreen = false) => {
     let lines = sdp.split('\r\n');
+    let keepPayloads = new Set();
     
-    // 1. Filter out everything except H264, Opus and basic networking
-    // This keeps the SDP tiny so Supabase doesn't drop the broadcast packet
-    const filteredLines = lines.filter(line => {
+    // 1. First pass: Identify payload types for H264 and Opus
+    lines.forEach(line => {
       if (line.startsWith('a=rtpmap:')) {
-        const lower = line.toLowerCase();
-        return lower.includes('h264') || lower.includes('opus') || lower.includes('telephone-event');
+        const match = line.match(/a=rtpmap:(\d+) (\w+)/);
+        if (match) {
+          const id = match[1];
+          const codec = match[2].toLowerCase();
+          if (codec === 'h264' || codec === 'opus' || codec === 'telephone-event') {
+            keepPayloads.add(id);
+          }
+        }
       }
-      if (line.startsWith('a=fmtp:')) {
-        // Only keep fmtp for the codecs we kept
-        return true; 
+    });
+
+    // 2. Second pass: Filter lines
+    const filteredLines = lines.filter(line => {
+      // Keep all non-codec-specific lines by default
+      if (!line.startsWith('a=rtpmap:') && !line.startsWith('a=fmtp:') && !line.startsWith('a=rtcp-fb:') && !line.startsWith('m=')) {
+        // Strip bloating extensions
+        if (line.startsWith('a=extmap:')) return false;
+        return true;
       }
-      // Remove generic attributes that bloat SDP
-      if (line.startsWith('a=extmap:')) return false;
-      if (line.startsWith('a=msid-semantic:')) return false;
+
+      // Filter rtpmap, fmtp, rtcp-fb lines
+      if (line.startsWith('a=rtpmap:') || line.startsWith('a=fmtp:') || line.startsWith('a=rtcp-fb:')) {
+        const match = line.match(/:( \d+|\d+)/);
+        if (match) {
+          const id = match[1].trim().split(' ')[0];
+          return keepPayloads.has(id);
+        }
+        return true;
+      }
+
+      // Handle m= lines (audio/video)
+      if (line.startsWith('m=')) {
+        const parts = line.split(' ');
+        // parts[0] is 'm=audio' or 'm=video', [1] is port, [2] is proto
+        const payloads = parts.slice(3).filter(id => keepPayloads.has(id));
+        if (payloads.length > 0) {
+          // Replace the m= line with only the kept payloads
+          return true; // We'll handle the actual string replacement in the next step
+        }
+      }
+
       return true;
     });
 
-    // 2. Prioritize H264
-    const mVideoIndex = filteredLines.findIndex(line => line.startsWith('m=video'));
-    if (mVideoIndex !== -1) {
-      const parts = filteredLines[mVideoIndex].split(' ');
-      const payloadTypes = parts.slice(3);
-      const h264Types = [];
-      filteredLines.forEach(line => {
-        if (line.startsWith('a=rtpmap:') && line.toLowerCase().includes('h264')) {
-          const match = line.match(/a=rtpmap:(\d+)/);
-          if (match) h264Types.push(match[1]);
-        }
-      });
-
-      if (h264Types.length > 0) {
-        const newPayloadTypes = [...h264Types, ...payloadTypes.filter(t => !h264Types.includes(t))];
-        parts.splice(3, payloadTypes.length, ...newPayloadTypes);
-        filteredLines[mVideoIndex] = parts.join(' ');
+    // 3. Final pass: Reconstruct m= lines with correct payload order
+    const finalLines = filteredLines.map(line => {
+      if (line.startsWith('m=')) {
+        const parts = line.split(' ');
+        const payloads = parts.slice(3).filter(id => keepPayloads.has(id));
+        return parts.slice(0, 3).concat(payloads).join(' ');
       }
-    }
+      return line;
+    });
 
-    let newSdp = filteredLines.join('\r\n');
+    let newSdp = finalLines.join('\r\n');
     
-    // 3. Add Bitrate and Quality flags for Screen Share
+    // 4. Add Bitrate flags for Screen Share
     if (isScreen) {
       if (!newSdp.includes('b=AS:')) {
         newSdp = newSdp.replace(/a=mid:video/g, 'a=mid:video\r\nb=AS:10000\r\nb=TIAS:10000000');
