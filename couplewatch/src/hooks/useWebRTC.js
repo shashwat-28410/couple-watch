@@ -133,10 +133,10 @@ export function useWebRTC(user, channelRef) {
         { urls: "stun:stun1.l.google.com:19302" },
         { urls: "stun:stun2.l.google.com:19302" },
         { urls: "stun:stun3.l.google.com:19302" },
-        { urls: "stun:stun4.l.google.com:19302" }
+        { urls: "stun:stun4.l.google.com:19302" },
+        { urls: "stun:stun.services.mozilla.com" }
       ],
-      bundlePolicy: "max-bundle",
-      rtcpMuxPolicy: "require"
+      bundlePolicy: "max-bundle"
     });
     
     pc.onicecandidate = (event) => {
@@ -198,13 +198,30 @@ export function useWebRTC(user, channelRef) {
   const optimizeSDP = (sdp, isScreen = false) => {
     let lines = sdp.split('\r\n');
     
-    // 1. Prioritize H264 for hardware acceleration smoothness
-    const mVideoIndex = lines.findIndex(line => line.startsWith('m=video'));
+    // 1. Filter out everything except H264, Opus and basic networking
+    // This keeps the SDP tiny so Supabase doesn't drop the broadcast packet
+    const filteredLines = lines.filter(line => {
+      if (line.startsWith('a=rtpmap:')) {
+        const lower = line.toLowerCase();
+        return lower.includes('h264') || lower.includes('opus') || lower.includes('telephone-event');
+      }
+      if (line.startsWith('a=fmtp:')) {
+        // Only keep fmtp for the codecs we kept
+        return true; 
+      }
+      // Remove generic attributes that bloat SDP
+      if (line.startsWith('a=extmap:')) return false;
+      if (line.startsWith('a=msid-semantic:')) return false;
+      return true;
+    });
+
+    // 2. Prioritize H264
+    const mVideoIndex = filteredLines.findIndex(line => line.startsWith('m=video'));
     if (mVideoIndex !== -1) {
-      const parts = lines[mVideoIndex].split(' ');
+      const parts = filteredLines[mVideoIndex].split(' ');
       const payloadTypes = parts.slice(3);
       const h264Types = [];
-      lines.forEach(line => {
+      filteredLines.forEach(line => {
         if (line.startsWith('a=rtpmap:') && line.toLowerCase().includes('h264')) {
           const match = line.match(/a=rtpmap:(\d+)/);
           if (match) h264Types.push(match[1]);
@@ -214,20 +231,17 @@ export function useWebRTC(user, channelRef) {
       if (h264Types.length > 0) {
         const newPayloadTypes = [...h264Types, ...payloadTypes.filter(t => !h264Types.includes(t))];
         parts.splice(3, payloadTypes.length, ...newPayloadTypes);
-        lines[mVideoIndex] = parts.join(' ');
+        filteredLines[mVideoIndex] = parts.join(' ');
       }
     }
 
-    // 2. Add Bitrate and Quality flags
-    let newSdp = lines.join('\r\n');
+    let newSdp = filteredLines.join('\r\n');
+    
+    // 3. Add Bitrate and Quality flags for Screen Share
     if (isScreen) {
-      newSdp = newSdp.replace(/b=AS:([0-9]+)/g, 'b=AS:15000');
-      newSdp = newSdp.replace(/b=TIAS:([0-9]+)/g, 'b=TIAS:15000000');
       if (!newSdp.includes('b=AS:')) {
-        newSdp = newSdp.replace(/a=mid:video/g, 'a=mid:video\r\nb=AS:15000\r\nb=TIAS:15000000');
+        newSdp = newSdp.replace(/a=mid:video/g, 'a=mid:video\r\nb=AS:10000\r\nb=TIAS:10000000');
       }
-      // Chrome-specific flags for instant high quality and stability
-      newSdp = newSdp.replace(/a=fmtp:(.*)/g, 'a=fmtp:$1;x-google-min-bitrate=8000;x-google-max-bitrate=15000;x-google-start-bitrate=12000;googLowDelayAudio=true;googHighStartBitrate=true');
     }
     
     return newSdp;
