@@ -90,12 +90,17 @@ export default function Room() {
   const chat = useChat(room, user, connectionStatus, channelRef);
   const webrtc = useWebRTC(user, channelRef);
 
+  const [lastSignalTime, setLastSignalTime] = useState(null);
+
   // We need stable references for the event listener
   const handleWebRTCSignalRef = useRef(webrtc.handleWebRTCSignal);
   const reBroadcastScreenOfferRef = useRef(webrtc.reBroadcastScreenOffer);
 
   useEffect(() => {
-    handleWebRTCSignalRef.current = webrtc.handleWebRTCSignal;
+    handleWebRTCSignalRef.current = (payload) => {
+      setLastSignalTime(Date.now());
+      webrtc.handleWebRTCSignal(payload);
+    };
     reBroadcastScreenOfferRef.current = webrtc.reBroadcastScreenOffer;
   }, [webrtc.handleWebRTCSignal, webrtc.reBroadcastScreenOffer]);
 
@@ -447,7 +452,13 @@ export default function Room() {
 
   if (roomSync.isInitializing) {
     return (
-      <div className="min-h-screen bg-[#0A0A0F] flex flex-col items-center justify-center">
+      <div className="min-h-screen bg-[#0A0A0F] flex flex-col items-center justify-center p-6 text-center">
+        {(!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) && (
+          <div className="mb-8 p-6 bg-red-500/10 border border-red-500/50 rounded-2xl max-w-md animate-in zoom-in duration-500">
+            <h2 className="text-red-500 font-black uppercase tracking-widest mb-2">Environment Error</h2>
+            <p className="text-white/70 text-sm">Supabase credentials are missing. Please add <b>VITE_SUPABASE_URL</b> and <b>VITE_SUPABASE_ANON_KEY</b> to your Vercel Project Settings.</p>
+          </div>
+        )}
         <div className="relative w-24 h-24 mb-8">
           <div className="absolute inset-0 border-4 border-rose-500/10 rounded-full"></div>
           <div className="absolute inset-0 border-4 border-t-rose-500 rounded-full animate-spin"></div>
@@ -486,6 +497,12 @@ export default function Room() {
               </div>
             </div>
             <div className="flex items-center gap-6 self-end md:self-auto">
+              {lastSignalTime && (
+                <div className="hidden md:flex items-center gap-2 px-3 py-1.5 rounded-md bg-white/5 border border-white/10 text-[8px] font-black uppercase tracking-widest text-[#55556A]">
+                  <span className="w-1 h-1 rounded-full bg-blue-500 animate-ping"></span>
+                  Signal Active
+                </div>
+              )}
               <div className="px-5 py-2.5 rounded-full text-[10px] font-black uppercase tracking-widest bg-black text-white border border-white/10 shadow-xl shadow-black flex items-center gap-3">
                 <span className={`w-2 h-2 rounded-full shadow-[0_0_8px_currentColor] ${
                   connectionStatus === "SUBSCRIBED" ? "bg-green-500 animate-pulse text-green-500" : 
