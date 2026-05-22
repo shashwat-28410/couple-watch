@@ -251,6 +251,9 @@ export function useWebRTC(user, channelRef) {
     if (!channelRef.current || !user || isStoppingRef.current) return;
     console.log("Starting call:", type);
     try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("Your browser does not support camera/microphone access. Please ensure you are on HTTPS.");
+      }
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: true, 
         video: type === 'video'
@@ -279,7 +282,10 @@ export function useWebRTC(user, channelRef) {
       });
     } catch (err) { 
       console.error("Start Call Error (getUserMedia):", err); 
-      alert("Could not access camera/microphone. Please check permissions ❤️");
+      alert(err.name === 'NotAllowedError' 
+        ? "Camera/Microphone permission was denied. Please allow access in your browser settings ❤️" 
+        : `Error: ${err.message}`
+      );
       endCall(false);
     }
   }, [user, channelRef, createPeerConnection, endCall]);
@@ -399,6 +405,9 @@ export function useWebRTC(user, channelRef) {
     try {
       let stream = null;
       if (!isScreen) {
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+          throw new Error("Your browser does not support camera/microphone access. Please ensure you are on HTTPS.");
+        }
         stream = await navigator.mediaDevices.getUserMedia({ 
           audio: true, 
           video: type === 'video'
@@ -445,7 +454,10 @@ export function useWebRTC(user, channelRef) {
     } catch (err) { 
       console.error("Join Call Error:", err); 
       if (!isScreen) {
-        alert("Could not access camera/microphone. Please check permissions ❤️");
+        alert(err.name === 'NotAllowedError' 
+          ? "Camera/Microphone permission was denied. Please allow access in your browser settings ❤️" 
+          : `Error: ${err.message}`
+        );
         endCall(false);
       }
     }
@@ -589,10 +601,10 @@ export function useWebRTC(user, channelRef) {
 
   // Auto-join screen share offers when they arrive
   useEffect(() => {
-    if (pendingOffer && pendingOffer.incomingType === 'screen') {
+    if (pendingOffer && pendingOffer.incomingType === 'screen' && !remoteScreenStream) {
       joinIncomingCall();
     }
-  }, [pendingOffer, joinIncomingCall]);
+  }, [pendingOffer, joinIncomingCall, remoteScreenStream]);
 
   return {
     callStatus,
