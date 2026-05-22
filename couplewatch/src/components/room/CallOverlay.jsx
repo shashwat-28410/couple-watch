@@ -120,7 +120,7 @@ export function CallOverlay({
     <div className="w-full h-full flex flex-col p-2 animate-in fade-in duration-500">
       <div className="flex gap-2 h-[280px] w-full">
         <div className="flex-1 rounded-[18px] bg-black border border-white/5 overflow-hidden relative shadow-2xl">
-          <video ref={remoteVidRef} autoPlay playsInline className={`w-full h-full object-cover transition-opacity duration-700 ${callStatus === "CONNECTED" ? 'opacity-100' : 'opacity-0'}`} />
+          <video ref={remoteVidRef} autoPlay playsInline muted className={`w-full h-full object-cover transition-opacity duration-700 ${callStatus === "CONNECTED" ? 'opacity-100' : 'opacity-0'}`} />
           {callStatus !== "CONNECTED" && (<div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0D0D12]"><div className="w-10 h-10 border-2 border-[#881337]/20 border-t-[#BE123C] rounded-full animate-spin mb-3"></div><span className="text-[8px] font-black uppercase tracking-widest text-[#881337]/60">Connecting...</span></div>)}
           <div className="absolute top-3 left-3 px-2 py-1 rounded-full bg-black/40 backdrop-blur-md border border-white/10 flex items-center gap-1.5 z-20">
             <div className={`w-1 h-1 rounded-full ${callStatus === "CONNECTED" ? "bg-green-500" : "bg-yellow-500 animate-pulse"}`}></div>

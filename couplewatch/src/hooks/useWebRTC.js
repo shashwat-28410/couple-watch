@@ -122,8 +122,9 @@ export function useWebRTC(user, channelRef) {
   const createPeerConnection = useCallback((isScreen = false) => {
     const pcRef = isScreen ? peerConnectionScreenRef : peerConnectionRef;
     
-    if (pcRef.current) {
-      pcRef.current.close();
+    // Re-use existing stable connection if possible
+    if (pcRef.current && pcRef.current.signalingState !== 'closed' && pcRef.current.signalingState !== 'failed') {
+      return pcRef.current;
     }
 
     const pc = new RTCPeerConnection({ 
@@ -154,22 +155,32 @@ export function useWebRTC(user, channelRef) {
     };
 
     pc.ontrack = (event) => { 
-      console.log(`${isScreen ? 'Screen' : 'Camera'} track received:`, event.streams[0]);
-      if (event.streams && event.streams[0]) {
-        if (isScreen) {
-          setRemoteScreenStream(event.streams[0]);
-        } else {
-          setRemoteStream(event.streams[0]); 
-          setCallStatus("CONNECTED"); 
-        }
-      }
+      console.log(`${isScreen ? 'Screen' : 'Camera'} track received`);
+      const incomingStream = event.streams[0];
+      
+      const updateStream = (prev) => {
+        const stream = prev || new MediaStream();
+        const tracks = incomingStream ? incomingStream.getTracks() : [event.track];
+        
+        let changed = false;
+        tracks.forEach(t => {
+          if (!stream.getTracks().find(existing => existing.id === t.id)) {
+            stream.addTrack(t);
+            changed = true;
+          }
+        });
+
+        if (!isScreen && !prev) setCallStatus("CONNECTED");
+        return (changed || !prev) ? new MediaStream(stream.getTracks()) : prev;
+      };
+
+      if (isScreen) setRemoteScreenStream(updateStream);
+      else setRemoteStream(updateStream);
     };
 
     pc.oniceconnectionstatechange = () => {
       console.log(`${isScreen ? 'Screen' : 'Camera'} ICE state:`, pc.iceConnectionState);
-      if (pc.iceConnectionState === "disconnected" || 
-          pc.iceConnectionState === "failed" || 
-          pc.iceConnectionState === "closed") {
+      if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "closed") {
         if (!isStoppingRef.current && !isScreen) endCall(false);
         else if (isScreen) {
           setRemoteScreenStream(null);
@@ -276,6 +287,10 @@ export function useWebRTC(user, channelRef) {
 
   const startScreenShare = useCallback(async () => {
     if (!channelRef.current || !user || isStoppingRef.current) return;
+    
+    // If already sharing, just return the existing stream
+    if (localScreenStreamRef.current) return localScreenStreamRef.current;
+
     console.log("Starting screen share");
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ 
@@ -424,25 +439,34 @@ export function useWebRTC(user, channelRef) {
     const { type, sdp, candidate, senderId, callType: incomingType, isScreen: isSignalScreen } = payload;
     if (!user || senderId === user.id) return;
 
-    const isScreen = incomingType === 'screen' || isSignalScreen;
+    // Determine if this signal belongs to a screen share
+    const isScreen = incomingType === 'screen' || isSignalScreen === true;
     const pcRef = isScreen ? peerConnectionScreenRef : peerConnectionRef;
     const queue = isScreen ? iceCandidatesScreenQueue : iceCandidatesQueue;
 
     try {
       if (type === "offer") { 
-        console.log(`Received ${isScreen ? 'screen' : ''} offer from:`, senderId);
-        setPendingOffer({ sdp, incomingType }); 
+        // CRITICAL: If already connected to this stream, ignore redundant offers
+        const hasStream = isScreen ? !!remoteScreenStream : !!remoteStream;
+        if (hasStream && pcRef.current?.signalingState === 'stable') {
+          return;
+        }
+
+        console.log(`Received ${isScreen ? 'screen' : 'camera'} offer from:`, senderId);
+        setPendingOffer({ sdp, incomingType: isScreen ? 'screen' : incomingType }); 
         if (!isScreen) setCallStatus("INCOMING"); 
-      } else if (type === "answer" && pcRef.current) {
-        console.log(`Received ${isScreen ? 'screen' : ''} answer from:`, senderId);
-        if (pcRef.current.signalingState !== "stable") {
-          await pcRef.current.setRemoteDescription(new RTCSessionDescription(sdp));
-          while (queue.current.length > 0) {
-            const cand = queue.current.shift();
-            try {
-              await pcRef.current.addIceCandidate(new RTCIceCandidate(cand));
-            } catch (e) {
-              console.warn("ICE candidate error after answer:", e);
+      } else if (type === "answer") {
+        console.log(`Received ${isScreen ? 'screen' : 'camera'} answer from:`, senderId);
+        if (pcRef.current) {
+          if (pcRef.current.signalingState !== "stable") {
+            await pcRef.current.setRemoteDescription(new RTCSessionDescription(sdp));
+            while (queue.current.length > 0) {
+              const cand = queue.current.shift();
+              try {
+                await pcRef.current.addIceCandidate(new RTCIceCandidate(cand));
+              } catch (e) {
+                console.warn("ICE candidate error after answer:", e);
+              }
             }
           }
         }
@@ -471,7 +495,7 @@ export function useWebRTC(user, channelRef) {
     } catch (err) {
       console.error("Signal Handling Error:", err);
     }
-  }, [user, endCall]);
+  }, [user, endCall, remoteStream, remoteScreenStream]);
 
   const toggleMute = () => {
     if (localStreamRef.current) {
@@ -495,37 +519,44 @@ export function useWebRTC(user, channelRef) {
 
   const reBroadcastScreenOffer = useCallback(async () => {
     if (localScreenStreamRef.current && channelRef.current && user) {
-      const pc = createPeerConnection(true);
+      const pc = peerConnectionScreenRef.current;
       
-      // Add tracks and set sender parameters for max quality
+      // If we already have a stable connection and a local description, just re-send it
+      // to avoid resetting the stream for existing viewers.
+      if (pc && pc.signalingState === 'stable' && pc.localDescription) {
+        console.log("Re-broadcasting existing stable screen offer");
+        channelRef.current.send({ 
+          type: "broadcast", 
+          event: "webrtc-signal", 
+          payload: { 
+            type: "offer", 
+            sdp: pc.localDescription, 
+            senderId: user.id, 
+            callType: 'screen' 
+          } 
+        });
+        return;
+      }
+
+      // ONLY if we don't have a stable connection, create a new one
+      const newPc = createPeerConnection(true);
+      
+      // Add tracks (only if they aren't already there)
+      const currentTracks = newPc.getSenders().map(s => s.track);
       for (const track of localScreenStreamRef.current.getTracks()) {
-        const sender = pc.addTrack(track, localScreenStreamRef.current);
-        if (track.kind === 'video') {
-          try {
-            const params = sender.getParameters();
-            if (!params.encodings) params.encodings = [{}];
-            params.encodings[0].maxBitrate = 15000000; // 15 Mbps
-            params.encodings[0].maxFramerate = 60;
-            params.encodings[0].networkPriority = 'high';
-            sender.setParameters(params);
-            
-            if ('degradationPreference' in sender) {
-              sender.degradationPreference = 'maintain-framerate';
-            }
-          } catch (e) {
-            console.warn("Could not set sender parameters:", e);
-          }
+        if (!currentTracks.includes(track)) {
+          newPc.addTrack(track, localScreenStreamRef.current);
         }
       }
 
-      const offer = await pc.createOffer({
+      const offer = await newPc.createOffer({
         offerToReceiveAudio: false,
         offerToReceiveVideo: false,
       });
 
       const sdp = optimizeSDP(offer.sdp, true);
       const finalizedOffer = { type: 'offer', sdp };
-      await pc.setLocalDescription(finalizedOffer);
+      await newPc.setLocalDescription(finalizedOffer);
 
       channelRef.current.send({ 
         type: "broadcast", 

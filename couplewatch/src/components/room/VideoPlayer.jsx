@@ -43,9 +43,26 @@ export function VideoPlayer({
 
   useEffect(() => {
     if (isScreenShare && streamVideoRef.current && streamToPlay) {
-      streamVideoRef.current.srcObject = streamToPlay;
+      if (streamVideoRef.current.srcObject !== streamToPlay) {
+        streamVideoRef.current.srcObject = streamToPlay;
+      }
+      if (hasInteracted) {
+        streamVideoRef.current.play().catch(e => console.warn("Stream play error:", e));
+      }
     }
-  }, [isScreenShare, streamToPlay]);
+  }, [isScreenShare, streamToPlay, hasInteracted]);
+
+  // Handle playing when interaction happens
+  useEffect(() => {
+    if (hasInteracted) {
+      if (isScreenShare && streamVideoRef.current) {
+        streamVideoRef.current.play().catch(() => {});
+      }
+      if (!isScreenShare && playerRef.current && roomState?.is_playing) {
+        playerRef.current.play().catch(() => {});
+      }
+    }
+  }, [hasInteracted, isScreenShare, roomState?.is_playing]);
 
   const handleVideoClick = (e) => {
     if (e.target.closest('button') || e.target.closest('.draggable-video') || e.target.closest('input')) return;
@@ -241,7 +258,7 @@ export function VideoPlayer({
             <button onClick={() => setVideoError(null)} className="mt-6 px-6 py-2 rounded-full bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest">Dismiss</button>
           </div>
         )}
-        {!hasInteracted && (roomState?.video_url || isScreenShare) && ( <div onClick={() => setHasInteracted(true)} className="absolute inset-0 bg-[#0A0A0F]/95 flex flex-col items-center justify-center cursor-pointer backdrop-blur-2xl z-20"><div className="w-24 h-24 bg-primary-gradient rounded-full flex items-center justify-center mb-8 shadow-2xl transition-transform hover:scale-110"><span className="text-4xl text-white ml-2">▶</span></div><p className="text-3xl font-black text-white uppercase italic">Tap to join sync ❤️</p></div> )}
+        {!hasInteracted && ( <div onClick={() => setHasInteracted(true)} className="absolute inset-0 bg-[#0A0A0F]/95 flex flex-col items-center justify-center cursor-pointer backdrop-blur-2xl z-20 animate-in fade-in duration-700"><div className="w-24 h-24 bg-primary-gradient rounded-full flex items-center justify-center mb-8 shadow-2xl transition-transform hover:scale-110"><span className="text-4xl text-white ml-2">▶</span></div><p className="text-3xl font-black text-white uppercase italic">Tap to join sync ❤️</p><p className="mt-4 text-[10px] font-black uppercase tracking-[0.3em] text-white/40">Ensures perfect audio & video sync</p></div> )}
       </div>
     </div>
   );
