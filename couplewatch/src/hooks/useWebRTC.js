@@ -173,7 +173,7 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
         else if (cand.includes("srflx")) type = "STUN";
         else if (cand.includes("relay")) type = "TURN";
         
-        addLog(`Gathered ${isScreen ? 'screen' : 'camera'} ICE candidate (${type}):`, event.candidate.candidate);
+        addLog(`Gathered ${isScreen ? 'screen' : 'camera'} ICE candidate (${type}): ${event.candidate.candidate}`);
 
         const signal = { 
           type: "candidate", 
@@ -191,11 +191,15 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
     };
 
     pc.ontrack = (event) => { 
-      addLog(`${isScreen ? 'Screen' : 'Camera'} track received:`, event.track.kind);
-      const incomingStream = event.streams[0];
+      addLog(`${isScreen ? 'Screen' : 'Camera'} track received: ${event.track.kind}`);
       
+      // Ensure call status is updated regardless of which track (audio/video) arrives first
+      if (!isScreen) {
+        setCallStatus("CONNECTED");
+      }
+
+      const incomingStream = event.streams[0];
       const updateStream = (prev) => {
-        // Create new stream or use existing
         const stream = prev || new MediaStream();
         const tracks = incomingStream ? incomingStream.getTracks() : [event.track];
         
@@ -204,12 +208,8 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
             stream.addTrack(t);
           }
         });
-
-        if (!isScreen && !prev) setCallStatus("CONNECTED");
         
-        // Always return a NEW MediaStream to force React to update the video element srcObject
-        const newStream = new MediaStream(stream.getTracks());
-        return newStream;
+        return new MediaStream(stream.getTracks());
       };
 
       if (isScreen) setRemoteScreenStream(updateStream);
@@ -292,7 +292,7 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
 
   const startCall = useCallback(async (type) => {
     if (!channelRef.current || !user || isStoppingRef.current) return;
-    addLog("Starting call:", type);
+    addLog(`Starting call: ${type}`);
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error("Your browser does not support camera/microphone access. Please ensure you are on HTTPS.");
@@ -332,7 +332,8 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
         } 
       });
     } catch (err) { 
-      addLog("Start Call Error (getUserMedia):", err); 
+      addLog(`Start Call Error: ${err.message}`);
+ 
       alert(err.name === 'NotAllowedError' 
         ? "Camera/Microphone permission was denied. Please allow access in your browser settings ❤️" 
         : `Error: ${err.message}`
@@ -459,8 +460,7 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
     const sdpOffer = pendingOffer.sdp;
     setPendingOffer(null); // Clear immediately to avoid loops
     const isScreen = type === 'screen';
-    addLog(`Joining incoming ${isScreen ? 'screen' : 'call'}:`, type);
-    
+    addLog(`Joining incoming ${isScreen ? 'screen' : 'call'}: ${type}`);
     try {
       let stream = null;
       if (!isScreen) {
@@ -519,7 +519,8 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
         }
       }
     } catch (err) { 
-      addLog("Join Call Error:", err); 
+      addLog(`Join Call Error: ${err.message}`);
+ 
       if (!isScreen) {
         alert(err.name === 'NotAllowedError' 
           ? "Camera/Microphone permission was denied. Please allow access in your browser settings ❤️" 
@@ -547,11 +548,11 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
           return;
         }
 
-        addLog(`Received ${isScreen ? 'screen' : 'camera'} offer from:`, senderId);
+        addLog(`Received ${isScreen ? 'screen' : 'camera'} offer from: ${senderId}`);
         setPendingOffer({ sdp, incomingType: isScreen ? 'screen' : incomingType }); 
         if (!isScreen) setCallStatus("INCOMING"); 
       } else if (type === "answer") {
-        addLog(`Received ${isScreen ? 'screen' : 'camera'} answer from:`, senderId);
+        addLog(`Received ${isScreen ? 'screen' : 'camera'} answer from: ${senderId}`);
         if (pcRef.current) {
           if (pcRef.current.signalingState !== "stable") {
             await pcRef.current.setRemoteDescription(new RTCSessionDescription(sdp));
@@ -581,7 +582,7 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
           targetQueue.current.push(candidate);
         }
       } else if (type === "hangup") {
-        addLog("Received hangup from:", senderId);
+        addLog(`Received hangup from: ${senderId}`);
         endCall(false);
       } else if (type === "stop-screen") {
         addLog("Partner stopped screen share");

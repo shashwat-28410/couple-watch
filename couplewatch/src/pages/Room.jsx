@@ -33,7 +33,8 @@ export default function Room() {
   const [debugLogs, setDebugLogs] = useState([]);
   const [showDebug, setShowDebug] = useState(false);
 
-  const addLog = (msg) => {
+  const addLog = (...args) => {
+    const msg = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ');
     console.log(msg);
     setDebugLogs(prev => [...prev.slice(-19), `${new Date().toLocaleTimeString()}: ${msg}`]);
   };
