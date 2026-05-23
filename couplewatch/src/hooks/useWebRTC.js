@@ -163,6 +163,14 @@ export function useWebRTC(user, channelRef) {
     
     pc.onicecandidate = (event) => {
       if (event.candidate && channelRef.current) {
+        const cand = event.candidate.candidate;
+        let type = "unknown";
+        if (cand.includes("host")) type = "HOST";
+        else if (cand.includes("srflx")) type = "STUN";
+        else if (cand.includes("relay")) type = "TURN";
+        
+        console.log(`Gathered ${isScreen ? 'screen' : 'camera'} ICE candidate (${type}):`, event.candidate.candidate);
+
         const signal = { 
           type: "candidate", 
           candidate: event.candidate, 
@@ -171,17 +179,15 @@ export function useWebRTC(user, channelRef) {
         };
 
         if (pc.localDescription && pc.localDescription.type) {
-          console.log(`Sending ${isScreen ? 'screen' : 'camera'} ICE candidate immediately`);
           channelRef.current.send({ type: "broadcast", event: "webrtc-signal", payload: signal });
         } else {
-          console.log(`Queueing ${isScreen ? 'screen' : 'camera'} ICE candidate`);
           pc.localCandidatesQueue.push(signal);
         }
       }
     };
 
     pc.ontrack = (event) => { 
-      console.log(`${isScreen ? 'Screen' : 'Camera'} track received`);
+      console.log(`${isScreen ? 'Screen' : 'Camera'} track received:`, event.track.kind);
       const incomingStream = event.streams[0];
       
       const updateStream = (prev) => {
@@ -223,71 +229,33 @@ export function useWebRTC(user, channelRef) {
 
   const optimizeSDP = (sdp, isScreen = false) => {
     let lines = sdp.split('\r\n');
-    let keepPayloads = new Set();
     
-    // 1. First pass: Identify payload types for H264 and Opus
-    lines.forEach(line => {
-      if (line.startsWith('a=rtpmap:')) {
-        const match = line.match(/a=rtpmap:(\d+) (\w+)/);
-        if (match) {
-          const id = match[1];
-          const codec = match[2].toLowerCase();
-          if (codec === 'h264' || codec === 'opus' || codec === 'telephone-event') {
-            keepPayloads.add(id);
-          }
+    // Prioritize H264
+    const mVideoIndex = lines.findIndex(line => line.startsWith('m=video'));
+    if (mVideoIndex !== -1) {
+      const parts = lines[mVideoIndex].split(' ');
+      const payloadTypes = parts.slice(3);
+      const h264Types = [];
+      lines.forEach(line => {
+        if (line.startsWith('a=rtpmap:') && line.toLowerCase().includes('h264')) {
+          const match = line.match(/a=rtpmap:(\d+)/);
+          if (match) h264Types.push(match[1]);
         }
+      });
+
+      if (h264Types.length > 0) {
+        const newPayloadTypes = [...h264Types, ...payloadTypes.filter(t => !h264Types.includes(t))];
+        parts.splice(3, payloadTypes.length, ...newPayloadTypes);
+        lines[mVideoIndex] = parts.join(' ');
       }
-    });
+    }
 
-    // 2. Second pass: Filter lines
-    const filteredLines = lines.filter(line => {
-      // Keep all non-codec-specific lines by default
-      if (!line.startsWith('a=rtpmap:') && !line.startsWith('a=fmtp:') && !line.startsWith('a=rtcp-fb:') && !line.startsWith('m=')) {
-        // Strip bloating extensions
-        if (line.startsWith('a=extmap:')) return false;
-        return true;
-      }
-
-      // Filter rtpmap, fmtp, rtcp-fb lines
-      if (line.startsWith('a=rtpmap:') || line.startsWith('a=fmtp:') || line.startsWith('a=rtcp-fb:')) {
-        const match = line.match(/:( \d+|\d+)/);
-        if (match) {
-          const id = match[1].trim().split(' ')[0];
-          return keepPayloads.has(id);
-        }
-        return true;
-      }
-
-      // Handle m= lines (audio/video)
-      if (line.startsWith('m=')) {
-        const parts = line.split(' ');
-        // parts[0] is 'm=audio' or 'm=video', [1] is port, [2] is proto
-        const payloads = parts.slice(3).filter(id => keepPayloads.has(id));
-        if (payloads.length > 0) {
-          // Replace the m= line with only the kept payloads
-          return true; // We'll handle the actual string replacement in the next step
-        }
-      }
-
-      return true;
-    });
-
-    // 3. Final pass: Reconstruct m= lines with correct payload order
-    const finalLines = filteredLines.map(line => {
-      if (line.startsWith('m=')) {
-        const parts = line.split(' ');
-        const payloads = parts.slice(3).filter(id => keepPayloads.has(id));
-        return parts.slice(0, 3).concat(payloads).join(' ');
-      }
-      return line;
-    });
-
-    let newSdp = finalLines.join('\r\n');
+    let newSdp = lines.join('\r\n');
     
-    // 4. Add Bitrate flags for Screen Share
+    // Add Bitrate flags for Screen Share
     if (isScreen) {
       if (!newSdp.includes('b=AS:')) {
-        newSdp = newSdp.replace(/a=mid:video/g, 'a=mid:video\r\nb=AS:10000\r\nb=TIAS:10000000');
+        newSdp = newSdp.replace(/a=mid:video/g, 'a=mid:video\r\nb=AS:5000\r\nb=TIAS:5000000');
       }
     }
     
