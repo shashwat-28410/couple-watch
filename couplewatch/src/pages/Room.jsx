@@ -30,6 +30,13 @@ export default function Room() {
   const [floatingReactions, setFloatingReactions] = useState([]);
   const [isFullScreen, setIsFullScreen] = useState(false);
   const [isTheaterMode, setIsTheaterMode] = useState(false);
+  const [debugLogs, setDebugLogs] = useState([]);
+  const [showDebug, setShowDebug] = useState(false);
+
+  const addLog = (msg) => {
+    console.log(msg);
+    setDebugLogs(prev => [...prev.slice(-19), `${new Date().toLocaleTimeString()}: ${msg}`]);
+  };
 
   // ── Feature 2: Host Transfer ──
   const [showTransferModal, setShowTransferModal] = useState(false);
@@ -74,7 +81,7 @@ export default function Room() {
   const roomSync = useRoomSync(user, code, navigate);
   const { room, roomState, connectionStatus, channelRef } = roomSync;
 
-  const chat = useChat(room, user, connectionStatus, channelRef);
+  const chat = useChat(room, user, connectionStatus, channelRef, roomSync.profile);
   const webrtc = useWebRTC(user, channelRef);
 
   const [lastSignalTime, setLastSignalTime] = useState(null);
@@ -144,7 +151,10 @@ export default function Room() {
           });
         })
         .on("broadcast", { event: "chat-msg" }, ({ payload }) => chat.setMessages(current => current.some(x => x.id === payload.id) ? current : [...current, payload]))
-        .on("broadcast", { event: "webrtc-signal" }, ({ payload }) => handleWebRTCSignalRef.current(payload))
+        .on("broadcast", { event: "webrtc-signal" }, ({ payload }) => {
+          addLog(`WebRTC Signal: ${payload.type} from ${payload.senderId}`);
+          handleWebRTCSignalRef.current(payload);
+        })
         .on("broadcast", { event: "sync-event" }, ({ payload }) => {
           roomSync.setRoomState(payload);
           if (payload.force && playerRef.current && !roomSync.isHostRef.current) {
@@ -264,6 +274,26 @@ export default function Room() {
     roomSync.updateRoomState(payload);
     setVideoUrlInput("");
     setHasInteracted(true);
+  };
+
+  const handleSaveMemory = async () => {
+    if (!room || !user || !roomState?.video_url) return;
+    const title = prompt("Name this movie night memory:", "Movie Night");
+    if (!title) return;
+
+    try {
+      const { error } = await supabase.from("room_memories").insert([{
+        room_id: room.id,
+        user_id: user.id,
+        title: title
+      }]);
+
+      if (error) throw error;
+      setToastMsg("🎞️ Memory saved to your shared scrapbook!");
+    } catch (err) {
+      console.error("Save memory error:", err);
+      setToastMsg("❌ Failed to save memory");
+    }
   };
 
   // ─── Feature 2: Host Transfer Helper ──────────────────────
@@ -420,7 +450,12 @@ export default function Room() {
                   <div className="flex flex-col gap-6">
                     <div className="flex flex-col md:flex-row gap-4">
                       <input type="text" value={videoUrlInput} onChange={(e) => setVideoUrlInput(e.target.value)} placeholder="PASTE DIRECT MP4 LINK..." className="romantic-input flex-1 text-center font-bold tracking-[0.1em] placeholder:text-[#33334A] focus:scale-[1.01]" />
-                      <button onClick={handleSetVideoUrl} className="pill-button bg-primary-gradient px-12 text-white">SET VIDEO</button>
+                      <div className="flex gap-2">
+                        <button onClick={handleSetVideoUrl} className="pill-button bg-primary-gradient px-12 text-white">SET VIDEO</button>
+                        {roomState?.video_url && (
+                          <button onClick={handleSaveMemory} className="w-14 h-14 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-xl hover:bg-white/10 transition-all" title="Save to Memories">🎞️</button>
+                        )}
+                      </div>
                     </div>
 
                     <div className="flex items-center justify-center gap-4">
@@ -491,7 +526,25 @@ export default function Room() {
                   isAudioMuted={webrtc.isAudioMuted}
                   isVideoEnabled={webrtc.isVideoEnabled}
                   user={user}
+                  room={room}
                 />
+
+                <div className="mt-4">
+                  <button 
+                    onClick={() => setShowDebug(!showDebug)} 
+                    className="text-[8px] font-black uppercase tracking-widest text-white/20 hover:text-rose-500 transition-colors"
+                  >
+                    {showDebug ? "Hide Debug" : "Show Debug Logs"}
+                  </button>
+                  {showDebug && (
+                    <div className="mt-4 p-4 bg-black/80 border border-white/5 rounded-xl font-mono text-[8px] space-y-1 max-h-[200px] overflow-y-auto custom-scrollbar text-green-500/70">
+                      {debugLogs.length === 0 && <p className="opacity-30">No logs yet...</p>}
+                      {debugLogs.map((log, i) => (
+                        <div key={i} className="border-b border-white/5 pb-1 last:border-0">{log}</div>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>

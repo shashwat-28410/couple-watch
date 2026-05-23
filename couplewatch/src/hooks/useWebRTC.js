@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 
-export function useWebRTC(user, channelRef) {
+export function useWebRTC(user, channelRef, addLog = console.log) {
   const [callStatus, setCallStatus] = useState("IDLE");
   const [callType, setCallType] = useState(null);
   const [pendingOffer, setPendingOffer] = useState(null);
@@ -26,7 +26,7 @@ export function useWebRTC(user, channelRef) {
         track.stop();
         track.enabled = false;
       } catch (e) {
-        console.error("Error stopping track:", e);
+        addLog("Error stopping track:", e);
       }
     });
   }, []);
@@ -53,7 +53,7 @@ export function useWebRTC(user, channelRef) {
         try {
           ref.current.close();
         } catch (e) {
-          console.error("Error closing peer connection:", e);
+          addLog("Error closing peer connection:", e);
         }
         ref.current = null;
       }
@@ -134,28 +134,21 @@ export function useWebRTC(user, channelRef) {
         { urls: "stun:stun2.l.google.com:19302" },
         { urls: "stun:stun3.l.google.com:19302" },
         { urls: "stun:stun4.l.google.com:19302" },
-        { urls: "stun:stun.ekiga.net" },
-        { urls: "stun:stun.ideasip.com" },
-        { urls: "stun:stun.schlund.de" },
-        { urls: "stun:stun.stunprotocol.org:3478" },
-        { urls: "stun:stun.voiparound.com" },
-        { urls: "stun:stun.voipbuster.com" },
-        { urls: "stun:stun.voipstunt.com" },
-        { urls: "stun:stun.voxgratia.org" },
-        // Add OpenRelay Project Free TURN servers
+        // Use OpenRelay Project Free TURN servers with correct credentials
         {
-          urls: "turn:openrelay.metered.ca:443",
+          urls: [
+            "turn:openrelay.metered.ca:443",
+            "turn:openrelay.metered.ca:443?transport=tcp",
+            "turn:openrelay.metered.ca:80",
+            "turn:openrelay.metered.ca:80?transport=tcp",
+          ],
           username: "openrelayproject",
           credential: "openrelayproject",
         },
-        {
-          urls: "turn:openrelay.metered.ca:80",
-          username: "openrelayproject",
-          credential: "openrelayproject",
-        }
       ],
       iceTransportPolicy: "all",
-      bundlePolicy: "balanced"
+      bundlePolicy: "balanced",
+      iceCandidatePoolSize: 10
     });
 
     // Queue for local candidates until local description is set
@@ -169,7 +162,7 @@ export function useWebRTC(user, channelRef) {
         else if (cand.includes("srflx")) type = "STUN";
         else if (cand.includes("relay")) type = "TURN";
         
-        console.log(`Gathered ${isScreen ? 'screen' : 'camera'} ICE candidate (${type}):`, event.candidate.candidate);
+        addLog(`Gathered ${isScreen ? 'screen' : 'camera'} ICE candidate (${type}):`, event.candidate.candidate);
 
         const signal = { 
           type: "candidate", 
@@ -187,7 +180,7 @@ export function useWebRTC(user, channelRef) {
     };
 
     pc.ontrack = (event) => { 
-      console.log(`${isScreen ? 'Screen' : 'Camera'} track received:`, event.track.kind);
+      addLog(`${isScreen ? 'Screen' : 'Camera'} track received:`, event.track.kind);
       const incomingStream = event.streams[0];
       
       const updateStream = (prev) => {
@@ -213,7 +206,7 @@ export function useWebRTC(user, channelRef) {
     };
 
     pc.oniceconnectionstatechange = () => {
-      console.log(`${isScreen ? 'Screen' : 'Camera'} ICE state:`, pc.iceConnectionState);
+      addLog(`${isScreen ? 'Screen' : 'Camera'} ICE state:`, pc.iceConnectionState);
       if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "closed") {
         if (!isStoppingRef.current && !isScreen) endCall(false);
         else if (isScreen) {
@@ -264,7 +257,7 @@ export function useWebRTC(user, channelRef) {
 
   const startCall = useCallback(async (type) => {
     if (!channelRef.current || !user || isStoppingRef.current) return;
-    console.log("Starting call:", type);
+    addLog("Starting call:", type);
     try {
       if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         throw new Error("Your browser does not support camera/microphone access. Please ensure you are on HTTPS.");
@@ -304,7 +297,7 @@ export function useWebRTC(user, channelRef) {
         } 
       });
     } catch (err) { 
-      console.error("Start Call Error (getUserMedia):", err); 
+      addLog("Start Call Error (getUserMedia):", err); 
       alert(err.name === 'NotAllowedError' 
         ? "Camera/Microphone permission was denied. Please allow access in your browser settings ❤️" 
         : `Error: ${err.message}`
@@ -336,7 +329,7 @@ export function useWebRTC(user, channelRef) {
     // If already sharing, just return the existing stream
     if (localScreenStreamRef.current) return localScreenStreamRef.current;
 
-    console.log("Starting screen share");
+    addLog("Starting screen share");
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ 
         video: { 
@@ -420,7 +413,7 @@ export function useWebRTC(user, channelRef) {
       
       return stream;
     } catch (err) {
-      console.error("Screen Share Error:", err);
+      addLog("Screen Share Error:", err);
       return null;
     }
   }, [user, channelRef, createPeerConnection, stopScreenShare]);
@@ -431,7 +424,7 @@ export function useWebRTC(user, channelRef) {
     const sdpOffer = pendingOffer.sdp;
     setPendingOffer(null); // Clear immediately to avoid loops
     const isScreen = type === 'screen';
-    console.log(`Joining incoming ${isScreen ? 'screen' : 'call'}:`, type);
+    addLog(`Joining incoming ${isScreen ? 'screen' : 'call'}:`, type);
     
     try {
       let stream = null;
@@ -491,7 +484,7 @@ export function useWebRTC(user, channelRef) {
         }
       }
     } catch (err) { 
-      console.error("Join Call Error:", err); 
+      addLog("Join Call Error:", err); 
       if (!isScreen) {
         alert(err.name === 'NotAllowedError' 
           ? "Camera/Microphone permission was denied. Please allow access in your browser settings ❤️" 
@@ -519,11 +512,11 @@ export function useWebRTC(user, channelRef) {
           return;
         }
 
-        console.log(`Received ${isScreen ? 'screen' : 'camera'} offer from:`, senderId);
+        addLog(`Received ${isScreen ? 'screen' : 'camera'} offer from:`, senderId);
         setPendingOffer({ sdp, incomingType: isScreen ? 'screen' : incomingType }); 
         if (!isScreen) setCallStatus("INCOMING"); 
       } else if (type === "answer") {
-        console.log(`Received ${isScreen ? 'screen' : 'camera'} answer from:`, senderId);
+        addLog(`Received ${isScreen ? 'screen' : 'camera'} answer from:`, senderId);
         if (pcRef.current) {
           if (pcRef.current.signalingState !== "stable") {
             await pcRef.current.setRemoteDescription(new RTCSessionDescription(sdp));
@@ -539,20 +532,24 @@ export function useWebRTC(user, channelRef) {
         }
       } else if (type === "candidate") {
         const iceCandidate = new RTCIceCandidate(candidate);
-        if (pcRef.current && pcRef.current.remoteDescription) {
+        // Ensure we route to correct PC based on signal
+        const targetPc = isSignalScreen ? peerConnectionScreenRef.current : peerConnectionRef.current;
+        const targetQueue = isSignalScreen ? iceCandidatesScreenQueue : iceCandidatesQueue;
+
+        if (targetPc && targetPc.remoteDescription) {
           try {
-            await pcRef.current.addIceCandidate(iceCandidate);
+            await targetPc.addIceCandidate(iceCandidate);
           } catch (e) {
-            console.warn("ICE candidate error:", e);
+            console.warn(`ICE candidate error (${isSignalScreen ? 'screen' : 'camera'}):`, e);
           }
         } else {
-          queue.current.push(candidate);
+          targetQueue.current.push(candidate);
         }
       } else if (type === "hangup") {
-        console.log("Received hangup from:", senderId);
+        addLog("Received hangup from:", senderId);
         endCall(false);
       } else if (type === "stop-screen") {
-        console.log("Partner stopped screen share");
+        addLog("Partner stopped screen share");
         setRemoteScreenStream(null);
         if (peerConnectionScreenRef.current) {
           peerConnectionScreenRef.current.close();
@@ -560,7 +557,7 @@ export function useWebRTC(user, channelRef) {
         }
       }
     } catch (err) {
-      console.error("Signal Handling Error:", err);
+      addLog("Signal Handling Error:", err);
     }
   }, [user, endCall, remoteStream, remoteScreenStream]);
 
@@ -591,7 +588,7 @@ export function useWebRTC(user, channelRef) {
       // If we already have a stable connection and a local description, just re-send it
       // to avoid resetting the stream for existing viewers.
       if (pc && pc.signalingState === 'stable' && pc.localDescription) {
-        console.log("Re-broadcasting existing stable screen offer");
+        addLog("Re-broadcasting existing stable screen offer");
         channelRef.current.send({ 
           type: "broadcast", 
           event: "webrtc-signal", 

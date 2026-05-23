@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "../lib/supabaseClient";
 
-export function useChat(room, user, connectionStatus, channelRef) {
+export function useChat(room, user, connectionStatus, channelRef, profile) {
   const [messages, setMessages] = useState([]);
   const [newMessage, setNewMessage] = useState("");
   const isTypingRef = useRef(false);
@@ -35,8 +35,7 @@ export function useChat(room, user, connectionStatus, channelRef) {
     }]).select().single();
 
     if (data) {
-      const { data: prof } = await supabase.from("profiles").select("full_name").eq("id", user.id).single();
-      const fullMsg = { ...data, profiles: prof || { full_name: user.email?.split('@')[0] } };
+      const fullMsg = { ...data, profiles: profile || { full_name: user.email?.split('@')[0] } };
       setMessages(current => [...current, fullMsg]);
       
       if (channelRef.current && connectionStatus === "SUBSCRIBED") {
@@ -50,11 +49,10 @@ export function useChat(room, user, connectionStatus, channelRef) {
     
     if (!isTypingRef.current) {
       isTypingRef.current = true;
-      const { data: prof } = await supabase.from("profiles").select("full_name").eq("id", user.id).single();
       channelRef.current.track({ 
         online_at: new Date().toISOString(), 
         is_typing: true, 
-        full_name: prof?.full_name || user.email?.split('@')[0]
+        full_name: profile?.full_name || user.email?.split('@')[0]
       });
     }
 
@@ -62,11 +60,10 @@ export function useChat(room, user, connectionStatus, channelRef) {
     typingTimeoutRef.current = setTimeout(async () => {
       isTypingRef.current = false;
       if (channelRef.current) {
-        const { data: prof } = await supabase.from("profiles").select("full_name").eq("id", user.id).single();
         channelRef.current.track({ 
           online_at: new Date().toISOString(), 
           is_typing: false, 
-          full_name: prof?.full_name || user.email?.split('@')[0]
+          full_name: profile?.full_name || user.email?.split('@')[0]
         });
       }
     }, 3000);
