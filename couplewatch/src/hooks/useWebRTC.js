@@ -11,6 +11,7 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
   const [screenStream, setScreenStream] = useState(null);
   const [isAudioMuted, setIsAudioMuted] = useState(false);
   const [isVideoEnabled, setIsVideoEnabled] = useState(false);
+  const [peerStatus, setPeerStatus] = useState("DISCONNECTED");
 
   const peerRef = useRef(null);
   const partnerPeerIdRef = useRef(null);
@@ -38,7 +39,8 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
     });
 
     peer.on("open", (id) => {
-      addLog("PeerJS: Connection opened with ID", id);
+      setPeerStatus("READY");
+      addLog(`PeerJS: Connection opened with ID ${id}`);
       // Broadcast our Peer ID to others in the room
       if (channelRef.current) {
         channelRef.current.send({
@@ -69,6 +71,7 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
     });
 
     peer.on("error", (err) => {
+      setPeerStatus("ERROR");
       addLog(`PeerJS Error: ${err.type} - ${err.message}`);
     });
 
@@ -76,6 +79,7 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
 
     return () => {
       peer.destroy();
+      setPeerStatus("DISCONNECTED");
     };
   }, [user?.id, channelRef, addLog]);
 
@@ -113,15 +117,9 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
     }
   }, [user?.id, channelRef, addLog]);
 
-  const startCall = useCallback(async (type) => {
-    if (!partnerPeerIdRef.current) {
-      // If we don't have partner ID, request it
-      channelRef.current?.send({ type: "broadcast", event: "request-peer-id", payload: {} });
-      addLog("PeerJS: No partner ID yet, requesting...");
-      return;
-    }
-
-    addLog(`PeerJS: Starting ${type} call to ${partnerPeerIdRef.current}`);
+  const executeCall = useCallback(async (type) => {
+    if (!partnerPeerIdRef.current || !peerRef.current) return;
+    addLog(`PeerJS: Calling partner ${partnerPeerIdRef.current}...`);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: true,
@@ -138,14 +136,21 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
         metadata: { type }
       });
 
+      if (!call) throw new Error("Failed to create call object");
+
       call.on("stream", (remoteStream) => {
-        addLog("PeerJS: Received remote camera stream");
+        addLog("PeerJS: Connection established! Remote stream received.");
         setRemoteStream(remoteStream);
         setCallStatus("CONNECTED");
       });
 
       call.on("close", () => {
-        addLog("PeerJS: Call closed");
+        addLog("PeerJS: Call closed by partner");
+        endCall(false);
+      });
+
+      call.on("error", (err) => {
+        addLog(`PeerJS Call Error: ${err.message}`);
         endCall(false);
       });
 
@@ -153,7 +158,33 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
     } catch (err) {
       addLog(`PeerJS: Start Call Error: ${err.message}`);
     }
-  }, [endCall, channelRef, addLog]);
+  }, [endCall, addLog]);
+
+  const startCall = useCallback(async (type) => {
+    if (peerStatus !== "READY") {
+      addLog("PeerJS: Still initializing, please wait...");
+      return;
+    }
+
+    if (!partnerPeerIdRef.current) {
+      addLog("PeerJS: No partner ID yet, requesting from room...");
+      channelRef.current?.send({ type: "broadcast", event: "request-peer-id", payload: {} });
+      
+      // Wait a moment for response and try again
+      setTimeout(async () => {
+        if (partnerPeerIdRef.current) {
+          addLog("PeerJS: Partner ID received, starting call now...");
+          executeCall(type);
+        } else {
+          addLog("PeerJS: Partner is not responding. Are they online?");
+          alert("Could not find your partner. Ask them to refresh their page! ❤️");
+        }
+      }, 1500);
+      return;
+    }
+
+    executeCall(type);
+  }, [peerStatus, channelRef, executeCall, addLog]);
 
   const joinIncomingCall = useCallback(async () => {
     if (!pendingOffer) return;

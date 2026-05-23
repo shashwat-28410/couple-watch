@@ -154,6 +154,7 @@ export default function Room() {
         })
         .on("broadcast", { event: "chat-msg" }, ({ payload }) => chat.setMessages(current => current.some(x => x.id === payload.id) ? current : [...current, payload]))
         .on("broadcast", { event: "peer-id" }, ({ payload }) => {
+          if (payload.userId === user?.id) return; // Ignore self
           addLog(`Received Partner Peer ID: ${payload.peerId}`);
           setPartnerPeerIdRef.current(payload.peerId);
         })
@@ -201,7 +202,18 @@ export default function Room() {
           );
           setToastMsg(amNewHost ? "👑 You are now the Host!" : "🔄 Host control transferred");
         })
+        .on("presence", { event: "join" }, () => {
+          addLog("New person joined, broadcasting Peer ID...");
+          if (user?.id && subChannel) {
+            subChannel.send({
+              type: "broadcast",
+              event: "peer-id",
+              payload: { peerId: user.id, userId: user.id }
+            });
+          }
+        })
         .on("presence", { event: "sync" }, () => {
+
           const state = subChannel.presenceState();
           roomSync.setOnlineUsers(Object.keys(state));
           const typing = [];
