@@ -83,21 +83,22 @@ export default function Room() {
   const { room, roomState, connectionStatus, channelRef } = roomSync;
 
   const chat = useChat(room, user, connectionStatus, channelRef, roomSync.profile);
-  const webrtc = useWebRTC(user, channelRef);
+  const webrtc = useWebRTC(user, channelRef, addLog);
 
   const [lastSignalTime, setLastSignalTime] = useState(null);
 
   // We need stable references for the event listener
   const handleWebRTCSignalRef = useRef(webrtc.handleWebRTCSignal);
-  const reBroadcastScreenOfferRef = useRef(webrtc.reBroadcastScreenOffer);
+  const setPartnerPeerIdRef = useRef(webrtc.setPartnerPeerId);
 
   useEffect(() => {
     handleWebRTCSignalRef.current = (payload) => {
       setLastSignalTime(Date.now());
       webrtc.handleWebRTCSignal(payload);
     };
-    reBroadcastScreenOfferRef.current = webrtc.reBroadcastScreenOffer;
-  }, [webrtc.handleWebRTCSignal, webrtc.reBroadcastScreenOffer]);
+    setPartnerPeerIdRef.current = webrtc.setPartnerPeerId;
+  }, [webrtc.handleWebRTCSignal, webrtc.setPartnerPeerId]);
+
 
   // Audio Stream Attachment (Keep here as it's a global hidden element)
   useEffect(() => { 
@@ -152,6 +153,21 @@ export default function Room() {
           });
         })
         .on("broadcast", { event: "chat-msg" }, ({ payload }) => chat.setMessages(current => current.some(x => x.id === payload.id) ? current : [...current, payload]))
+        .on("broadcast", { event: "peer-id" }, ({ payload }) => {
+          addLog(`Received Partner Peer ID: ${payload.peerId}`);
+          setPartnerPeerIdRef.current(payload.peerId);
+        })
+        .on("broadcast", { event: "request-peer-id" }, () => {
+          // Send our Peer ID again if requested
+          if (user?.id && subChannel) {
+            addLog("Resending Peer ID upon request");
+            subChannel.send({
+              type: "broadcast",
+              event: "peer-id",
+              payload: { peerId: user.id, userId: user.id }
+            });
+          }
+        })
         .on("broadcast", { event: "webrtc-signal" }, ({ payload }) => {
           addLog(`WebRTC Signal: ${payload.type} from ${payload.senderId}`);
           handleWebRTCSignalRef.current(payload);
@@ -165,15 +181,14 @@ export default function Room() {
         .on("broadcast", { event: "floating-reaction" }, ({ payload }) => triggerReaction(payload.emoji))
         .on("broadcast", { event: "request-sync" }, () => {
           if (roomSync.isHostRef.current && playerRef.current && channelRef.current) {
-            channelRef.current.send({ 
-              type: "broadcast", 
-              event: "sync-event", 
-              payload: { ...roomSync.roomStateRef.current, current_timestamp_seconds: playerRef.current.currentTime, force: true } 
+            channelRef.current.send({
+              type: "broadcast",
+              event: "sync-event",
+              payload: { ...roomSync.roomStateRef.current, current_timestamp_seconds: playerRef.current.currentTime, force: true }
             });
-            // Re-offer screen share if active
-            reBroadcastScreenOfferRef.current();
           }
         })
+
         // Feature 2: Host Transfer broadcast listener
         .on("broadcast", { event: "host-transfer" }, ({ payload }) => {
           const { newHostId } = payload;
@@ -206,6 +221,16 @@ export default function Room() {
               is_typing: false, 
               full_name: prof?.full_name || user.email?.split('@')[0]
             });
+
+            // Broadcast our Peer ID to the room
+            if (user?.id) {
+              addLog("Broadcasting Peer ID on Subscribe");
+              subChannel.send({
+                type: "broadcast",
+                event: "peer-id",
+                payload: { peerId: user.id, userId: user.id }
+              });
+            }
 
             // Auto-request sync on join to get current video and any active screen share
             if (!roomSync.isHostRef.current) {
