@@ -16,7 +16,9 @@ export function CallOverlay({
   joinIncomingCall,
   members,
   user,
-  profile
+  profile,
+  peerStatus,
+  partnerPeerId
 }) {
   const remoteMember = members.find(m => m.user_id !== user?.id);
   
@@ -54,9 +56,33 @@ export function CallOverlay({
     }
   }, [remoteStream, callStatus]);
 
+  const StatusBadge = () => {
+    if (peerStatus === "READY") {
+      return (
+        <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-500/10 border border-green-500/20">
+          <div className="w-1 h-1 rounded-full bg-green-500 animate-pulse"></div>
+          <span className="text-[7px] font-black uppercase tracking-widest text-green-500">Peer Ready</span>
+          {partnerPeerId && (
+            <>
+              <div className="w-px h-2 bg-green-500/20 mx-1"></div>
+              <span className="text-[7px] font-black uppercase tracking-widest text-green-500">Partner Found</span>
+            </>
+          )}
+        </div>
+      );
+    }
+    return (
+      <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-yellow-500/10 border border-yellow-500/20">
+        <div className="w-1 h-1 rounded-full bg-yellow-500 animate-spin"></div>
+        <span className="text-[7px] font-black uppercase tracking-widest text-yellow-500">Initializing...</span>
+      </div>
+    );
+  };
+
   if (callStatus === "IDLE") {
     return (
       <div className="flex flex-col items-center gap-7 p-10 animate-in slide-in-from-bottom-4 duration-700">
+        <StatusBadge />
         <p className="text-[11px] font-black uppercase tracking-[0.5em] text-[#55556A]">No active call</p>
         <div className="flex items-center gap-4">
           <button onClick={() => startCall('audio')} className="w-14 h-14 rounded-[12px] bg-[#1A1A1F] border border-[#881337]/40 flex items-center justify-center text-white hover:shadow-[0_0_20px_rgba(136,19,55,0.4)] hover:border-[#881337] transition-all group" title="Audio Call">

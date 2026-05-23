@@ -325,6 +325,8 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
     handleWebRTCSignal,
     setPartnerPeerId,
     toggleMute,
-    toggleVideo
+    toggleVideo,
+    peerStatus,
+    partnerPeerId: partnerPeerIdRef.current
   };
 }

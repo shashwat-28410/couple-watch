@@ -33,11 +33,11 @@ export default function Room() {
   const [debugLogs, setDebugLogs] = useState([]);
   const [showDebug, setShowDebug] = useState(false);
 
-  const addLog = (...args) => {
+  const addLog = useCallback((...args) => {
     const msg = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' ');
     console.log(msg);
     setDebugLogs(prev => [...prev.slice(-19), `${new Date().toLocaleTimeString()}: ${msg}`]);
-  };
+  }, []);
 
   // ── Feature 2: Host Transfer ──
   const [showTransferModal, setShowTransferModal] = useState(false);
@@ -543,16 +543,17 @@ export default function Room() {
                 />
                 
                 <div className="bg-[#0D0D12] backdrop-blur-2xl border border-[#881337]/30 rounded-[22px] min-h-[340px] shadow-2xl overflow-hidden">
-                  <CallOverlay 
-                    {...webrtc} 
-                    localVideoRef={localVideoRef} 
-                    remoteVideoRef={remoteVideoRef} 
-                    members={roomSync.members} 
-                    user={user} 
-                    profile={roomSync.profile} 
+                  <CallOverlay
+                    {...webrtc}
+                    localVideoRef={localVideoRef}
+                    remoteVideoRef={remoteVideoRef}
+                    members={roomSync.members}
+                    user={user}
+                    profile={roomSync.profile}
+                    peerStatus={webrtc.peerStatus}
+                    partnerPeerId={webrtc.partnerPeerId}
                   />
                 </div>
-
                 <ChatSidebar 
                   {...chat} 
                   typingUsers={roomSync.typingUsers} 
