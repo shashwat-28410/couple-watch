@@ -147,19 +147,26 @@ export function useWebRTC(user, channelRef) {
       ],
       bundlePolicy: "max-bundle"
     });
+
+    // Queue for local candidates until local description is set
+    pc.localCandidatesQueue = [];
     
     pc.onicecandidate = (event) => {
       if (event.candidate && channelRef.current) {
-        channelRef.current.send({ 
-          type: "broadcast", 
-          event: "webrtc-signal", 
-          payload: { 
-            type: "candidate", 
-            candidate: event.candidate, 
-            senderId: user.id,
-            isScreen
-          } 
-        });
+        const signal = { 
+          type: "candidate", 
+          candidate: event.candidate, 
+          senderId: user.id,
+          isScreen
+        };
+
+        if (pc.localDescription && pc.localDescription.type) {
+          console.log(`Sending ${isScreen ? 'screen' : 'camera'} ICE candidate immediately`);
+          channelRef.current.send({ type: "broadcast", event: "webrtc-signal", payload: signal });
+        } else {
+          console.log(`Queueing ${isScreen ? 'screen' : 'camera'} ICE candidate`);
+          pc.localCandidatesQueue.push(signal);
+        }
       }
     };
 
@@ -300,6 +307,14 @@ export function useWebRTC(user, channelRef) {
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
+      // Flush queued candidates
+      if (pc.localCandidatesQueue) {
+        pc.localCandidatesQueue.forEach(sig => {
+          channelRef.current.send({ type: "broadcast", event: "webrtc-signal", payload: sig });
+        });
+        pc.localCandidatesQueue = [];
+      }
+
       channelRef.current.send({ 
         type: "broadcast", 
         event: "webrtc-signal", 
@@ -402,6 +417,14 @@ export function useWebRTC(user, channelRef) {
       const finalizedOffer = { type: 'offer', sdp };
       await pc.setLocalDescription(finalizedOffer);
 
+      // Flush queued candidates
+      if (pc.localCandidatesQueue) {
+        pc.localCandidatesQueue.forEach(sig => {
+          channelRef.current.send({ type: "broadcast", event: "webrtc-signal", payload: sig });
+        });
+        pc.localCandidatesQueue = [];
+      }
+
       channelRef.current.send({ 
         type: "broadcast", 
         event: "webrtc-signal", 
@@ -460,6 +483,14 @@ export function useWebRTC(user, channelRef) {
       const sdp = optimizeSDP(answer.sdp, isScreen);
       const finalizedAnswer = { type: 'answer', sdp };
       await pc.setLocalDescription(finalizedAnswer);
+
+      // Flush queued candidates
+      if (pc.localCandidatesQueue) {
+        pc.localCandidatesQueue.forEach(sig => {
+          channelRef.current.send({ type: "broadcast", event: "webrtc-signal", payload: sig });
+        });
+        pc.localCandidatesQueue = [];
+      }
 
       channelRef.current.send({ 
         type: "broadcast", 
@@ -615,6 +646,14 @@ export function useWebRTC(user, channelRef) {
       const sdp = optimizeSDP(offer.sdp, true);
       const finalizedOffer = { type: 'offer', sdp };
       await newPc.setLocalDescription(finalizedOffer);
+
+      // Flush queued candidates
+      if (newPc.localCandidatesQueue) {
+        newPc.localCandidatesQueue.forEach(sig => {
+          channelRef.current.send({ type: "broadcast", event: "webrtc-signal", payload: sig });
+        });
+        newPc.localCandidatesQueue = [];
+      }
 
       channelRef.current.send({ 
         type: "broadcast", 
