@@ -145,7 +145,7 @@ export function useWebRTC(user, channelRef) {
           credential: "openrelayproject",
         }
       ],
-      bundlePolicy: "max-bundle"
+      bundlePolicy: "balanced"
     });
 
     // Queue for local candidates until local description is set
