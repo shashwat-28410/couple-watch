@@ -134,7 +134,7 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
         { urls: "stun:stun2.l.google.com:19302" },
         { urls: "stun:stun3.l.google.com:19302" },
         { urls: "stun:stun4.l.google.com:19302" },
-        // Use OpenRelay Project Free TURN servers with correct credentials
+        // Use multiple free TURN server providers for redundancy
         {
           urls: [
             "turn:openrelay.metered.ca:443",
@@ -145,9 +145,20 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
           username: "openrelayproject",
           credential: "openrelayproject",
         },
+        {
+          urls: [
+            "turn:global.turn.metered.ca:80",
+            "turn:global.turn.metered.ca:80?transport=tcp",
+            "turn:global.turn.metered.ca:443",
+            "turn:global.turn.metered.ca:443?transport=tcp",
+          ],
+          username: "openrelayproject",
+          credential: "openrelayproject",
+        }
       ],
       iceTransportPolicy: "all",
-      bundlePolicy: "balanced",
+      bundlePolicy: "max-bundle",
+      rtcpMuxPolicy: "require",
       iceCandidatePoolSize: 10
     });
 
@@ -205,9 +216,25 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
       else setRemoteStream(updateStream);
     };
 
+    const restartCall = async () => {
+      addLog(`Attempting to restart ${isScreen ? 'screen' : 'camera'} call...`);
+      if (isScreen) {
+        if (localScreenStreamRef.current) await startScreenShare();
+      } else {
+        if (localStreamRef.current) await startCall(callType);
+      }
+    };
+
     pc.oniceconnectionstatechange = () => {
-      addLog(`${isScreen ? 'Screen' : 'Camera'} ICE state:`, pc.iceConnectionState);
-      if (pc.iceConnectionState === "failed" || pc.iceConnectionState === "closed") {
+      addLog(`${isScreen ? 'Screen' : 'Camera'} ICE state: ${pc.iceConnectionState}`);
+      if (pc.iceConnectionState === "failed") {
+        restartCall();
+      } else if (pc.iceConnectionState === "disconnected") {
+        // Disconnected might be temporary, but if it stays, we might want to restart
+        setTimeout(() => {
+          if (pc.iceConnectionState === "disconnected") restartCall();
+        }, 5000);
+      } else if (pc.iceConnectionState === "closed") {
         if (!isStoppingRef.current && !isScreen) endCall(false);
         else if (isScreen) {
           setRemoteScreenStream(null);
@@ -223,20 +250,29 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
   const optimizeSDP = (sdp, isScreen = false) => {
     let lines = sdp.split('\r\n');
     
-    // Prioritize H264
+    // 1. Prioritize Opus for Audio
+    const mAudioIndex = lines.findIndex(line => line.startsWith('m=audio'));
+    if (mAudioIndex !== -1) {
+      const parts = lines[mAudioIndex].split(' ');
+      const opusType = lines.find(l => l.includes('a=rtpmap:') && l.toLowerCase().includes('opus'))?.match(/a=rtpmap:(\d+)/)?.[1];
+      if (opusType) {
+        const payloadTypes = parts.slice(3);
+        const newPayloadTypes = [opusType, ...payloadTypes.filter(t => t !== opusType)];
+        parts.splice(3, payloadTypes.length, ...newPayloadTypes);
+        lines[mAudioIndex] = parts.join(' ');
+      }
+    }
+
+    // 2. Prioritize H264 for Video
     const mVideoIndex = lines.findIndex(line => line.startsWith('m=video'));
     if (mVideoIndex !== -1) {
       const parts = lines[mVideoIndex].split(' ');
-      const payloadTypes = parts.slice(3);
-      const h264Types = [];
-      lines.forEach(line => {
-        if (line.startsWith('a=rtpmap:') && line.toLowerCase().includes('h264')) {
-          const match = line.match(/a=rtpmap:(\d+)/);
-          if (match) h264Types.push(match[1]);
-        }
-      });
+      const h264Types = lines.filter(l => l.includes('a=rtpmap:') && l.toLowerCase().includes('h264'))
+                            .map(l => l.match(/a=rtpmap:(\d+)/)?.[1])
+                            .filter(Boolean);
 
       if (h264Types.length > 0) {
+        const payloadTypes = parts.slice(3);
         const newPayloadTypes = [...h264Types, ...payloadTypes.filter(t => !h264Types.includes(t))];
         parts.splice(3, payloadTypes.length, ...newPayloadTypes);
         lines[mVideoIndex] = parts.join(' ');
@@ -245,11 +281,10 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
 
     let newSdp = lines.join('\r\n');
     
-    // Add Bitrate flags for Screen Share
-    if (isScreen) {
-      if (!newSdp.includes('b=AS:')) {
-        newSdp = newSdp.replace(/a=mid:video/g, 'a=mid:video\r\nb=AS:5000\r\nb=TIAS:5000000');
-      }
+    // 3. Add Bitrate flags for Screen Share or High Quality Video
+    if (!newSdp.includes('b=AS:')) {
+      const bitrate = isScreen ? '5000' : '2000';
+      newSdp = newSdp.replace(/a=mid:video/g, `a=mid:video\r\nb=AS:${bitrate}\r\nb=TIAS:${bitrate}000`);
     }
     
     return newSdp;
