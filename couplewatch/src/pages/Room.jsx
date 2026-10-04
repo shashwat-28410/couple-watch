@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import Navbar from "../components/Navbar";
@@ -156,7 +156,7 @@ export default function Room() {
         .on("broadcast", { event: "peer-id" }, ({ payload }) => {
           if (payload.userId === user?.id) return; // Ignore self
           addLog(`Received Partner Peer ID: ${payload.peerId}`);
-          setPartnerPeerIdRef.current(payload.peerId);
+          setPartnerPeerIdRef.current?.(payload.peerId);
         })
         .on("broadcast", { event: "request-peer-id" }, () => {
           // Send our Peer ID again if requested

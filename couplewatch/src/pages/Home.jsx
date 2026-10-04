@@ -72,14 +72,13 @@ export default function Home() {
       
       if (error || !room) throw new Error("Failed to create room");
 
-      // STEP 2: Parallel background tasks (don't block navigation if possible)
-      // Note: We need room.id for these, so we do them immediately after STEP 1
-      Promise.all([
+      // STEP 2: Parallel background tasks
+      await Promise.all([
         supabase.from("room_members").insert([{ room_id: room.id, user_id: authUser.id, role: "host" }]),
         supabase.from("room_state").insert([{ room_id: room.id, is_playing: false, current_timestamp_seconds: 0 }])
       ]);
 
-      // FAST NAVIGATE: Go to room as soon as it exists
+      // FAST NAVIGATE: Go to room as soon as its state and membership are initialized
       navigate(`/room/${code}`);
     } catch (err) {
       setErrorMsg(err.message);

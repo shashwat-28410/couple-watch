@@ -12,11 +12,21 @@ export function useChat(room, user, connectionStatus, channelRef, profile) {
     async function fetchMessages() {
       const { data } = await supabase
         .from("messages")
-        .select("id, content, created_at, user_id, profiles(full_name)")
+        .select("id, content, created_at, user_id")
         .eq("room_id", room.id)
         .order("created_at", { ascending: true })
         .limit(50);
-      if (data) setMessages(data);
+      
+      if (data) {
+        const userIds = [...new Set(data.map(m => m.user_id))];
+        const { data: profiles } = await supabase.from("profiles").select("id, full_name").in("id", userIds);
+        
+        const enriched = data.map(m => ({
+          ...m,
+          profiles: profiles?.find(p => p.id === m.user_id) || { full_name: "Partner" }
+        }));
+        setMessages(enriched);
+      }
     }
     fetchMessages();
   }, [room?.id]);

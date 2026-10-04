@@ -32,43 +32,32 @@ export function useRoomSync(user, code, navigate) {
         if (!roomData) { navigate("/", { replace: true }); return; }
         setRoom(roomData);
 
-        const { data: existingMember } = await supabase.from("room_members")
-          .select("*")
-          .eq("room_id", roomData.id)
-          .eq("user_id", authUser.id)
-          .maybeSingle();
-
-        if (!existingMember) {
-          // Enforce 2-person limit in room_members before joining
-          const { count } = await supabase
-            .from("room_members")
-            .select("*", { count: "exact", head: true })
-            .eq("room_id", roomData.id);
-
-          if (count >= 2) {
-            alert("Room is full 💔 Only 2 people can watch together.");
-            navigate("/", { replace: true });
-            return;
-          }
-
-          await supabase.from("room_members").insert([{ 
-            room_id: roomData.id, 
-            user_id: authUser.id, 
-            role: roomData.created_by === authUser.id ? "host" : "member" 
-          }]);
-        }
+        // Feature: Upsert member to avoid 409 conflict
+        await supabase.from("room_members").upsert([{ 
+          room_id: roomData.id, 
+          user_id: authUser.id, 
+          role: roomData.created_by === authUser.id ? "host" : "member" 
+        }]);
 
         const [stateRes, membersRes] = await Promise.all([
           supabase.from("room_state").select("*").eq("room_id", roomData.id).maybeSingle(),
-          supabase.from("room_members").select("id, role, user_id, profiles(full_name)").eq("room_id", roomData.id)
+          supabase.from("room_members").select("id, role, user_id").eq("room_id", roomData.id)
         ]);
 
         if (stateRes.data) setRoomState(stateRes.data);
         
         let hostStatus = false;
         if (membersRes.data) {
-          setMembers(membersRes.data);
-          const current = membersRes.data.find(m => m.user_id === authUser.id);
+          const userIds = membersRes.data.map(m => m.user_id);
+          const { data: profiles } = await supabase.from("profiles").select("id, full_name").in("id", userIds);
+          
+          const enrichedMembers = membersRes.data.map(m => ({
+            ...m,
+            profiles: profiles?.find(p => p.id === m.user_id) || { full_name: "Partner" }
+          }));
+          
+          setMembers(enrichedMembers);
+          const current = enrichedMembers.find(m => m.user_id === authUser.id);
           if (current) hostStatus = current.role === "host";
         }
         if (!hostStatus && roomData.created_by === authUser.id) hostStatus = true;

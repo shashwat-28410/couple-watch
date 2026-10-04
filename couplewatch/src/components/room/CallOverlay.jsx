@@ -57,15 +57,16 @@ export function CallOverlay({
   }, [remoteStream, callStatus]);
 
   const StatusBadge = () => {
-    if (peerStatus === "READY") {
+    if (peerStatus === "READY" || !peerStatus) {
+      const partnerOnline = partnerPeerId || remoteMember;
       return (
         <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-green-500/10 border border-green-500/20">
           <div className="w-1 h-1 rounded-full bg-green-500 animate-pulse"></div>
-          <span className="text-[7px] font-black uppercase tracking-widest text-green-500">Peer Ready</span>
-          {partnerPeerId && (
+          <span className="text-[7px] font-black uppercase tracking-widest text-green-500">Ready</span>
+          {partnerOnline && (
             <>
               <div className="w-px h-2 bg-green-500/20 mx-1"></div>
-              <span className="text-[7px] font-black uppercase tracking-widest text-green-500">Partner Found</span>
+              <span className="text-[7px] font-black uppercase tracking-widest text-green-500">Partner in Room</span>
             </>
           )}
         </div>
@@ -74,7 +75,7 @@ export function CallOverlay({
     return (
       <div className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-yellow-500/10 border border-yellow-500/20">
         <div className="w-1 h-1 rounded-full bg-yellow-500 animate-spin"></div>
-        <span className="text-[7px] font-black uppercase tracking-widest text-yellow-500">Initializing...</span>
+        <span className="text-[7px] font-black uppercase tracking-widest text-yellow-500">Connecting...</span>
       </div>
     );
   };

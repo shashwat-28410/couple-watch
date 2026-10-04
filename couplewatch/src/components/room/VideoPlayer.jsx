@@ -33,7 +33,7 @@ export function VideoPlayer({
   const [isDragging, setIsDragging] = useState(false);
 
   const isScreenShare = !!(screenStream || remoteScreenStream);
-  const streamToPlay = isHost ? screenStream : remoteScreenStream;
+  const streamToPlay = screenStream || remoteScreenStream;
 
   const streamVideoRef = useRef(null);
   const dragStartRef = useRef({ x: 0, y: 0 });
@@ -42,16 +42,25 @@ export function VideoPlayer({
   const controlsTimeoutRef = useRef(null);
   const seekFeedbackTimeoutRef = useRef(null);
 
+  const [streamAutoplayMuted, setStreamAutoplayMuted] = useState(false);
+
+  // Use a dedicated effect for stream attachment to be more resilient
   useEffect(() => {
-    if (isScreenShare && streamVideoRef.current && streamToPlay) {
-      if (streamVideoRef.current.srcObject !== streamToPlay) {
-        streamVideoRef.current.srcObject = streamToPlay;
+    const video = streamVideoRef.current;
+    if (isScreenShare && video && streamToPlay) {
+      if (video.srcObject !== streamToPlay) {
+        video.srcObject = streamToPlay;
       }
-      if (hasInteracted) {
-        streamVideoRef.current.play().catch(e => console.warn("Stream play error:", e));
-      }
+      video.play().catch(() => {
+        // If unmuted autoplay is blocked by browser, mute and play so video frames are immediately visible
+        if (!isHost) {
+          video.muted = true;
+          setStreamAutoplayMuted(true);
+          video.play().catch(e => console.warn("Stream play fallback error:", e));
+        }
+      });
     }
-  }, [isScreenShare, streamToPlay, hasInteracted]);
+  }, [isScreenShare, streamToPlay, isHost]);
 
   // Handle playing when interaction happens
   useEffect(() => {
@@ -63,7 +72,7 @@ export function VideoPlayer({
         playerRef.current.play().catch(() => {});
       }
     }
-  }, [hasInteracted, isScreenShare, roomState?.is_playing]);
+  }, [hasInteracted, isScreenShare, roomState?.is_playing, playerRef]);
   // Reset pan offset if zoom is reset
   useEffect(() => {
     if (zoomLevel <= 1) {
@@ -129,7 +138,16 @@ export function VideoPlayer({
     if (zoomLevel > 1 && dist > 5) return;
 
     setShowControls(prev => !prev);
-    if (isScreenShare) return;
+    if (isScreenShare) {
+      if (streamVideoRef.current) {
+        streamVideoRef.current.play().catch(() => {});
+        if (!isHost) {
+          streamVideoRef.current.muted = false;
+          setStreamAutoplayMuted(false);
+        }
+      }
+      return;
+    }
 
     const now = Date.now();
     const isDoubleTap = now - lastClickTimeRef.current < 300;
@@ -196,15 +214,36 @@ export function VideoPlayer({
         ))}
 
         {isScreenShare ? (
-          <video 
-            ref={streamVideoRef} 
-            autoPlay 
-            playsInline 
-            className={`absolute inset-0 w-full h-full ${
-              viewMode === 'fill' ? 'object-cover' : 'object-contain'
-            }`} 
-            style={videoStyle}
-          />
+          <>
+            <video 
+              ref={streamVideoRef} 
+              autoPlay 
+              playsInline 
+              muted={isHost}
+              className={`absolute inset-0 w-full h-full ${
+                viewMode === 'fill' ? 'object-cover' : 'object-contain'
+              }`} 
+              style={videoStyle}
+            />
+            {streamAutoplayMuted && !isHost && (
+              <div className="absolute top-6 left-1/2 -translate-x-1/2 z-50 pointer-events-auto">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    if (streamVideoRef.current) {
+                      streamVideoRef.current.muted = false;
+                      setStreamAutoplayMuted(false);
+                      streamVideoRef.current.play().catch(() => {});
+                    }
+                  }}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-rose-600/90 hover:bg-rose-500 text-white text-[11px] font-black uppercase tracking-widest shadow-2xl backdrop-blur-md transition-all animate-bounce"
+                >
+                  <span>🔊</span> Tap to Unmute Screen Audio
+                </button>
+              </div>
+            )}
+          </>
         ) : roomState?.video_url ? (
           <video 
             ref={playerRef} 

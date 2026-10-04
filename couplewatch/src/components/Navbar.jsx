@@ -13,7 +13,7 @@ export default function Navbar({ user }) {
     if (user) {
       supabase
         .from("profiles")
-        .select("full_name, avatar")
+        .select("full_name")
         .eq("id", user.id)
         .single()
         .then(({ data }) => {
