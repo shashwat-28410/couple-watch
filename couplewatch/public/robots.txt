@@ -1,0 +1,9 @@
+# Allow all search engine crawlers
+User-agent: *
+Allow: /
+
+# Disallow private room URLs from being indexed in Google Search
+Disallow: /room/
+
+# XML Sitemap location
+Sitemap: https://couplewatch.in/sitemap.xml
