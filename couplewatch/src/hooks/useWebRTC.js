@@ -28,16 +28,60 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
   const [iceServers, setIceServers] = useState(DEFAULT_ICE_SERVERS);
 
   useEffect(() => {
-    let endpoint = import.meta.env.VITE_METERED_ENDPOINT;
+    // 1. Cloudflare Calls TURN (1,000 GB / 1 TB Free per month)
+    const cfKeyId = import.meta.env.VITE_CLOUDFLARE_TURN_KEY_ID;
+    const cfToken = import.meta.env.VITE_CLOUDFLARE_TURN_TOKEN;
+
+    if (cfKeyId && cfToken) {
+      fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${cfKeyId}/credentials/generate-ice-servers`, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${cfToken}`,
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ ttl: 86400 })
+      })
+        .then((res) => res.json())
+        .then((data) => {
+          if (data && Array.isArray(data.iceServers) && data.iceServers.length > 0) {
+            addLog("✅ Loaded Cloudflare Calls TURN relay (1,000 GB Free Tier active)");
+            setIceServers([...DEFAULT_ICE_SERVERS, ...data.iceServers]);
+          } else {
+            addLog("⚠️ Cloudflare TURN response did not contain valid iceServers");
+          }
+        })
+        .catch((err) => {
+          addLog(`❌ Failed to load Cloudflare TURN: ${err.message}`);
+        });
+      return;
+    }
+
+    // 2. Custom Static TURN Credentials (e.g. self-hosted coTURN, Twilio, etc.)
+    const staticTurnUrl = import.meta.env.VITE_TURN_URL;
+    const staticUsername = import.meta.env.VITE_TURN_USERNAME;
+    const staticCredential = import.meta.env.VITE_TURN_CREDENTIAL;
+
+    if (staticTurnUrl && staticUsername && staticCredential) {
+      const urls = staticTurnUrl.split(",").map((u) => u.trim());
+      addLog(`✅ Loaded custom static TURN servers (${urls.length})`);
+      setIceServers([
+        ...DEFAULT_ICE_SERVERS,
+        { urls, username: staticUsername, credential: staticCredential }
+      ]);
+      return;
+    }
+
+    // 3. Metered Video credentials (fallback)
+    let meteredEndpoint = import.meta.env.VITE_METERED_ENDPOINT;
     const appName = import.meta.env.VITE_METERED_APP_NAME;
     const apiKey = import.meta.env.VITE_METERED_API_KEY;
 
-    if (!endpoint && appName && apiKey) {
-      endpoint = `https://${appName}.metered.live/api/v1/turn/credentials?apiKey=${apiKey}`;
+    if (!meteredEndpoint && appName && apiKey) {
+      meteredEndpoint = `https://${appName}.metered.live/api/v1/turn/credentials?apiKey=${apiKey}`;
     }
 
-    if (endpoint) {
-      fetch(endpoint)
+    if (meteredEndpoint) {
+      fetch(meteredEndpoint)
         .then((res) => res.json())
         .then((servers) => {
           if (Array.isArray(servers) && servers.length > 0) {
@@ -50,9 +94,10 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
         .catch((err) => {
           addLog(`❌ Could not load Metered TURN credentials: ${err.message}`);
         });
-    } else {
-      addLog("ℹ️ Running in STUN-only mode (Add VITE_METERED_API_KEY in .env for strict Wi-Fi firewalls)");
+      return;
     }
+
+    addLog("ℹ️ Running in STUN-only mode. For campus or strict Wi-Fi, configure Cloudflare Calls (1 TB free) in .env");
   }, [addLog]);
 
   const pcRef = useRef(null);
