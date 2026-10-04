@@ -14,6 +14,21 @@ const DEFAULT_ICE_SERVERS = [
   { urls: "stun:relay.metered.ca:80" }
 ];
 
+const CF_CACHE_KEY = "couplewatch_cf_turn_v1";
+
+function getCachedIceServers() {
+  try {
+    const cached = sessionStorage.getItem(CF_CACHE_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (parsed.expiry > Date.now() && Array.isArray(parsed.servers) && parsed.servers.length > 0) {
+        return [...DEFAULT_ICE_SERVERS, ...parsed.servers];
+      }
+    }
+  } catch {}
+  return DEFAULT_ICE_SERVERS;
+}
+
 export function useWebRTC(user, channelRef, addLog = console.log) {
   const [callStatus, setCallStatus] = useState("IDLE"); // IDLE | OUTGOING | INCOMING | CONNECTED
   const [callType, setCallType] = useState(null); // 'audio' | 'video'
@@ -25,7 +40,7 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
   const [isVideoEnabled, setIsVideoEnabled] = useState(false);
   const [pendingOffer, setPendingOffer] = useState(null);
   const [peerStatus] = useState("READY");
-  const [iceServers, setIceServers] = useState(DEFAULT_ICE_SERVERS);
+  const [iceServers, setIceServers] = useState(() => getCachedIceServers());
 
   useEffect(() => {
     // 1. Cloudflare Calls TURN (1,000 GB / 1 TB Free per month)
@@ -46,6 +61,12 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
           if (data && Array.isArray(data.iceServers) && data.iceServers.length > 0) {
             addLog("✅ Loaded Cloudflare Calls TURN relay (1,000 GB Free Tier active)");
             setIceServers([...DEFAULT_ICE_SERVERS, ...data.iceServers]);
+            try {
+              sessionStorage.setItem(CF_CACHE_KEY, JSON.stringify({
+                expiry: Date.now() + 80000 * 1000,
+                servers: data.iceServers
+              }));
+            } catch {}
           } else {
             addLog("⚠️ Cloudflare TURN response did not contain valid iceServers");
           }
