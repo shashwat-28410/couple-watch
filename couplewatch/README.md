@@ -12,6 +12,7 @@ A premium, romantic, and modern real-time co-watching platform designed for coup
 
 ### 📹 2. Fullscreen Video Call Overlay
 *   **WebRTC Video Call:** Integrated low-latency voice and video call with your partner.
+*   **Screen Sharing:** Stream movie tabs or desktop with synchronized audio and adaptive resolution.
 *   **Draggable Overlay:** When entering fullscreen mode on the player, your partner's camera turns into a floating PIP box.
 *   **Fluid Repositioning:** Click and drag the camera overlay to any corner of the screen so it never blocks key parts of the video.
 *   **Minimize Toggle:** Collapse the remote feed into a subtle, pulsating camera icon for maximum movie immersion, and expand it with a single tap.
