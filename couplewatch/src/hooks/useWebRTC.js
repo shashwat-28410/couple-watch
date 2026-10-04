@@ -1,5 +1,19 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 
+const DEFAULT_ICE_SERVERS = [
+  {
+    urls: [
+      "stun:stun.l.google.com:19302",
+      "stun:stun1.l.google.com:19302",
+      "stun:stun2.l.google.com:19302",
+      "stun:stun3.l.google.com:19302",
+      "stun:stun4.l.google.com:19302"
+    ]
+  },
+  { urls: "stun:stun.cloudflare.com:3478" },
+  { urls: "stun:relay.metered.ca:80" }
+];
+
 export function useWebRTC(user, channelRef, addLog = console.log) {
   const [callStatus, setCallStatus] = useState("IDLE"); // IDLE | OUTGOING | INCOMING | CONNECTED
   const [callType, setCallType] = useState(null); // 'audio' | 'video'
@@ -11,36 +25,26 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
   const [isVideoEnabled, setIsVideoEnabled] = useState(false);
   const [pendingOffer, setPendingOffer] = useState(null);
   const [peerStatus] = useState("READY");
+  const [iceServers, setIceServers] = useState(DEFAULT_ICE_SERVERS);
 
-  const [iceServers] = useState([
-    { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
-    { urls: "stun:openrelay.metered.ca:80" },
-    {
-      urls: "turns:openrelay.metered.ca:443?transport=tcp",
-      username: "openrelayproject",
-      credential: "openrelayproject"
-    },
-    {
-      urls: "turn:openrelay.metered.ca:443?transport=tcp",
-      username: "openrelayproject",
-      credential: "openrelayproject"
-    },
-    {
-      urls: "turn:openrelay.metered.ca:443",
-      username: "openrelayproject",
-      credential: "openrelayproject"
-    },
-    {
-      urls: "turn:openrelay.metered.ca:80?transport=tcp",
-      username: "openrelayproject",
-      credential: "openrelayproject"
-    },
-    {
-      urls: "turn:openrelay.metered.ca:80",
-      username: "openrelayproject",
-      credential: "openrelayproject"
+  useEffect(() => {
+    const appName = import.meta.env.VITE_METERED_APP_NAME;
+    const apiKey = import.meta.env.VITE_METERED_API_KEY;
+
+    if (appName && apiKey) {
+      fetch(`https://${appName}.metered.live/api/v1/turn/credentials?apiKey=${apiKey}`)
+        .then((res) => res.json())
+        .then((servers) => {
+          if (Array.isArray(servers) && servers.length > 0) {
+            addLog("Loaded verified TURN relay servers from Metered Video");
+            setIceServers([...DEFAULT_ICE_SERVERS, ...servers]);
+          }
+        })
+        .catch((err) => {
+          addLog(`Could not load Metered TURN credentials: ${err.message}`);
+        });
     }
-  ]);
+  }, [addLog]);
 
   const pcRef = useRef(null);
   const pcScreenRef = useRef(null);
@@ -134,8 +138,7 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
       iceServers: iceServers,
       iceTransportPolicy: "all",
       bundlePolicy: "max-bundle",
-      rtcpMuxPolicy: "require",
-      iceCandidatePoolSize: 2
+      rtcpMuxPolicy: "require"
     });
     
     pc.onicecandidate = (event) => {
@@ -173,10 +176,44 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
       }
     };
 
+    let disconnectTimer = null;
     pc.oniceconnectionstatechange = () => {
       const state = pc.iceConnectionState;
       addLog(`${isScreen ? 'Screen' : 'Media'} ICE state: ${state}`);
-      if (state === "failed" || state === "closed") {
+
+      if (state === "connected" || state === "completed") {
+        if (disconnectTimer) {
+          clearTimeout(disconnectTimer);
+          disconnectTimer = null;
+        }
+      } else if (state === "disconnected") {
+        if (!disconnectTimer) {
+          disconnectTimer = setTimeout(() => {
+            if (pc.iceConnectionState === "disconnected" || pc.iceConnectionState === "failed") {
+              addLog(`${isScreen ? 'Screen' : 'Media'} ICE disconnected timeout`);
+              if (!isScreen) fullReset();
+              else safeSetState(setRemoteScreenStream, null);
+            }
+          }, 6000);
+        }
+      } else if (state === "failed") {
+        addLog(`${isScreen ? 'Screen' : 'Media'} ICE failed: attempting recovery...`);
+        if (typeof pc.restartIce === "function") {
+          try {
+            pc.restartIce();
+          } catch (e) {
+            addLog(`ICE restart error: ${e.message}`);
+          }
+        }
+        if (!disconnectTimer) {
+          disconnectTimer = setTimeout(() => {
+            if (pc.iceConnectionState === "failed") {
+              if (!isScreen) fullReset();
+              else safeSetState(setRemoteScreenStream, null);
+            }
+          }, 5000);
+        }
+      } else if (state === "closed") {
         if (!isScreen) fullReset();
         else safeSetState(setRemoteScreenStream, null);
       }
