@@ -28,21 +28,30 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
   const [iceServers, setIceServers] = useState(DEFAULT_ICE_SERVERS);
 
   useEffect(() => {
+    let endpoint = import.meta.env.VITE_METERED_ENDPOINT;
     const appName = import.meta.env.VITE_METERED_APP_NAME;
     const apiKey = import.meta.env.VITE_METERED_API_KEY;
 
-    if (appName && apiKey) {
-      fetch(`https://${appName}.metered.live/api/v1/turn/credentials?apiKey=${apiKey}`)
+    if (!endpoint && appName && apiKey) {
+      endpoint = `https://${appName}.metered.live/api/v1/turn/credentials?apiKey=${apiKey}`;
+    }
+
+    if (endpoint) {
+      fetch(endpoint)
         .then((res) => res.json())
         .then((servers) => {
           if (Array.isArray(servers) && servers.length > 0) {
-            addLog("Loaded verified TURN relay servers from Metered Video");
+            addLog(`✅ Loaded ${servers.length} verified TURN relay servers from Metered Video`);
             setIceServers([...DEFAULT_ICE_SERVERS, ...servers]);
+          } else {
+            addLog("⚠️ Metered API returned empty or invalid server list");
           }
         })
         .catch((err) => {
-          addLog(`Could not load Metered TURN credentials: ${err.message}`);
+          addLog(`❌ Could not load Metered TURN credentials: ${err.message}`);
         });
+    } else {
+      addLog("ℹ️ Running in STUN-only mode (Add VITE_METERED_API_KEY in .env for strict Wi-Fi firewalls)");
     }
   }, [addLog]);
 
