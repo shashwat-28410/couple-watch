@@ -44,8 +44,8 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
 
   useEffect(() => {
     // 1. Cloudflare Calls TURN (1,000 GB / 1 TB Free per month)
-    const cfKeyId = import.meta.env.VITE_CLOUDFLARE_TURN_KEY_ID;
-    const cfToken = import.meta.env.VITE_CLOUDFLARE_TURN_TOKEN;
+    const cfKeyId = import.meta.env.VITE_CLOUDFLARE_TURN_KEY_ID || "e8e9d1d82f230033986e60f2cc9ccece";
+    const cfToken = import.meta.env.VITE_CLOUDFLARE_TURN_TOKEN || "f6cba962222de9db8c4404664bc42002d5e6e6866ea781c24e8e3ba6ff26ff55";
 
     if (cfKeyId && cfToken) {
       fetch(`https://rtc.live.cloudflare.com/v1/turn/keys/${cfKeyId}/credentials/generate-ice-servers`, {
