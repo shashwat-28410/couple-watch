@@ -38,11 +38,15 @@ export function useChat(room, user, connectionStatus, channelRef, profile) {
     const content = newMessage.trim();
     setNewMessage("");
 
-    const { data } = await supabase.from("messages").insert([{ 
+    const { data, error } = await supabase.from("messages").insert([{ 
       room_id: room.id, 
       user_id: user.id, 
       content 
     }]).select().single();
+
+    if (error) {
+      console.error("Message send failed:", error);
+    }
 
     if (data) {
       const fullMsg = { ...data, profiles: profile || { full_name: user.email?.split('@')[0] } };
