@@ -21,5 +21,3 @@ export const supabase = createClient(supabaseUrl || "", supabaseAnonKey || "", {
     heartbeatIntervalMs: 3000, // Frequent heartbeats to keep connection alive
   },
 });
-
-window.supabase = supabase;
