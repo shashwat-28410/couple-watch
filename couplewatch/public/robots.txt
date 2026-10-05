@@ -6,4 +6,4 @@ Allow: /
 Disallow: /room/
 
 # XML Sitemap location
-Sitemap: https://couplewatch.in/sitemap.xml
+Sitemap: https://www.couplewatch.in/sitemap.xml
