@@ -4,11 +4,16 @@ import { supabase } from "../lib/supabaseClient";
 import AuthModal from "../components/AuthModal";
 
 export default function ProtectedLayout() {
+  const isRecoveryFromUrl = typeof window !== "undefined" && (
+    window.location.hash.includes("type=recovery") ||
+    window.location.search.includes("type=recovery")
+  );
+
   const [session, setSession] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [showAuth, setShowAuth] = useState(false);
-  const [initialTab, setInitialTab] = useState("login");
-  const [isRecovering, setIsRecovering] = useState(false);
+  const [showAuth, setShowAuth] = useState(isRecoveryFromUrl);
+  const [initialTab, setInitialTab] = useState(isRecoveryFromUrl ? "reset" : "login");
+  const [isRecovering, setIsRecovering] = useState(isRecoveryFromUrl);
   const [critError, setCritError] = useState(null);
 
   // 🔐 Load session + listen for auth changes
@@ -42,10 +47,10 @@ export default function ProtectedLayout() {
   useEffect(() => {
     const checkAuth = async () => {
       try {
-        if (!session?.user) {
-          setShowAuth(true);
-        } else if (isRecovering) {
+        if (isRecovering) {
           // Keep modal open for password reset
+          setShowAuth(true);
+        } else if (!session?.user) {
           setShowAuth(true);
         } else {
           setShowAuth(false);
@@ -92,7 +97,10 @@ export default function ProtectedLayout() {
       <Outlet />
       <AuthModal 
         isOpen={showAuth} 
-        onClose={() => setShowAuth(false)} 
+        onClose={() => {
+          setShowAuth(false);
+          setIsRecovering(false);
+        }} 
         initialTab={initialTab} 
       />
     </>

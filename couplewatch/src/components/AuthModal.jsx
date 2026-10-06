@@ -68,8 +68,16 @@ export default function AuthModal({ isOpen, onClose, initialTab = "login" }) {
           window.location.reload();
         }, 500);
       } else if (tab === "forgot") {
+        const isLocal = typeof window !== "undefined" && (
+          window.location.hostname === "localhost" || 
+          window.location.hostname === "127.0.0.1"
+        );
+        const redirectUrl = isLocal 
+          ? window.location.origin 
+          : "https://couplewatch.in";
+
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: window.location.origin,
+          redirectTo: redirectUrl,
         });
         if (error) throw error;
         setMsg("✅ Reset link sent to your email!");
@@ -77,6 +85,9 @@ export default function AuthModal({ isOpen, onClose, initialTab = "login" }) {
         const { error } = await supabase.auth.updateUser({ password });
         if (error) throw error;
         setMsg("✅ Password updated! Logging you in...");
+        if (typeof window !== "undefined" && window.history.replaceState) {
+          window.history.replaceState(null, "", window.location.pathname);
+        }
         setTimeout(() => {
           onClose();
           window.location.reload();
