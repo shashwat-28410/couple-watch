@@ -68,16 +68,8 @@ export default function AuthModal({ isOpen, onClose, initialTab = "login" }) {
           window.location.reload();
         }, 500);
       } else if (tab === "forgot") {
-        const isLocal = typeof window !== "undefined" && (
-          window.location.hostname === "localhost" || 
-          window.location.hostname === "127.0.0.1"
-        );
-        const redirectUrl = isLocal 
-          ? window.location.origin 
-          : "https://couplewatch.in";
-
         const { error } = await supabase.auth.resetPasswordForEmail(email, {
-          redirectTo: redirectUrl,
+          redirectTo: "https://couplewatch.in",
         });
         if (error) throw error;
         setMsg("✅ Reset link sent to your email!");
