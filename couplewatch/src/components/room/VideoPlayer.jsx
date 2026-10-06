@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { Volume2, Film, AlertTriangle, Play } from "lucide-react";
 
 export function VideoPlayer({ 
   roomState, 
@@ -239,7 +240,7 @@ export function VideoPlayer({
                   }}
                   className="flex items-center gap-2 px-5 py-2.5 rounded-full bg-rose-600/90 hover:bg-rose-500 text-white text-[11px] font-black uppercase tracking-widest shadow-2xl backdrop-blur-md transition-all animate-bounce"
                 >
-                  <span>🔊</span> Tap to Unmute Screen Audio
+                  <Volume2 className="w-4 h-4" /> Tap to Unmute Screen Audio
                 </button>
               </div>
             )}
@@ -264,7 +265,7 @@ export function VideoPlayer({
             onError={() => { setVideoError("Playback failed."); setVideoLoading(false); }}
           />
         ) : ( 
-          <div className="w-full h-full bg-black flex items-center justify-center opacity-20"><span className="text-6xl">🎬</span></div> 
+          <div className="w-full h-full bg-black flex items-center justify-center opacity-20"><Film className="w-20 h-20 text-white/40" /></div> 
         )}
         
         {/* UI Overlay for Draggable Video Call - Only show in Cinema Modes */}
@@ -403,12 +404,12 @@ export function VideoPlayer({
         {videoLoading && !videoError && ( <div className="absolute inset-0 bg-black/60 flex flex-col items-center justify-center z-10"><div className="w-14 h-14 border-4 border-rose-500/20 border-t-rose-500 rounded-full animate-spin"></div></div> )}
         {videoError && (
           <div className="absolute inset-0 bg-black/80 flex flex-col items-center justify-center z-50 p-6 text-center">
-            <div className="text-4xl mb-4">⚠️</div>
+            <AlertTriangle className="w-10 h-10 text-rose-500 mb-4" />
             <p className="text-rose-500 font-bold mb-2">Video Error</p>
             <button onClick={() => setVideoError(null)} className="mt-6 px-6 py-2 rounded-full bg-white/5 border border-white/10 text-[10px] font-black uppercase tracking-widest">Dismiss</button>
           </div>
         )}
-        {!hasInteracted && ( <div onClick={() => setHasInteracted(true)} className="absolute inset-0 bg-[#0A0A0F]/95 flex flex-col items-center justify-center cursor-pointer backdrop-blur-2xl z-20 animate-in fade-in duration-700"><div className="w-24 h-24 bg-primary-gradient rounded-full flex items-center justify-center mb-8 shadow-2xl transition-transform hover:scale-110"><span className="text-4xl text-white ml-2">▶</span></div><p className="text-3xl font-black text-white uppercase italic">Tap to join sync ❤️</p><p className="mt-4 text-[10px] font-black uppercase tracking-[0.3em] text-white/40">Ensures perfect audio & video sync</p></div> )}
+        {!hasInteracted && ( <div onClick={() => setHasInteracted(true)} className="absolute inset-0 bg-[#0A0A0F]/95 flex flex-col items-center justify-center cursor-pointer backdrop-blur-2xl z-20 animate-in fade-in duration-700"><div className="w-24 h-24 bg-primary-gradient rounded-full flex items-center justify-center mb-8 shadow-2xl transition-transform hover:scale-110"><Play className="w-10 h-10 text-white fill-white ml-1" /></div><p className="text-3xl font-black text-white uppercase italic">Tap to join sync</p><p className="mt-4 text-[10px] font-black uppercase tracking-[0.3em] text-white/40">Ensures perfect audio & video sync</p></div> )}
       </div>
     </div>
   );

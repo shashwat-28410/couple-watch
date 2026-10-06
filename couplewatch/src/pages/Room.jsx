@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams, useNavigate } from "react-router-dom";
+import { Film, BookmarkPlus, RefreshCw } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import Navbar from "../components/Navbar";
 import Toast from "../components/Toast";
@@ -200,7 +201,7 @@ export default function Room() {
           roomSync.setMembers((prev) =>
             prev.map((m) => ({ ...m, role: m.user_id === newHostId ? "host" : "member" }))
           );
-          setToastMsg(amNewHost ? "👑 You are now the Host!" : "🔄 Host control transferred");
+          setToastMsg(amNewHost ? "You are now the Host!" : "Host control transferred");
         })
         .on("presence", { event: "join" }, () => {
           addLog("New person joined, broadcasting Peer ID...");
@@ -327,10 +328,10 @@ export default function Room() {
       }]);
 
       if (error) throw error;
-      setToastMsg("🎞️ Memory saved to your shared scrapbook!");
+      setToastMsg("Memory saved to your scrapbook!");
     } catch (err) {
       console.error("Save memory error:", err);
-      setToastMsg("❌ Failed to save memory");
+      setToastMsg("Failed to save memory");
     }
   };
 
@@ -361,10 +362,10 @@ export default function Room() {
       roomSync.setMembers((prev) =>
         prev.map((m) => ({ ...m, role: m.user_id === partner.user_id ? "host" : "member" }))
       );
-      setToastMsg("🔄 Host transferred to your partner");
+      setToastMsg("Host transferred to your partner");
     } catch (err) {
       console.error("Transfer host error:", err);
-      setToastMsg("❌ Transfer failed. Try again.");
+      setToastMsg("Transfer failed. Try again.");
     } finally {
       setTransferring(false);
       setShowTransferModal(false);
@@ -413,7 +414,7 @@ export default function Room() {
         <div className="relative w-24 h-24 mb-8">
           <div className="absolute inset-0 border-4 border-rose-500/10 rounded-full"></div>
           <div className="absolute inset-0 border-4 border-t-rose-500 rounded-full animate-spin"></div>
-          <div className="absolute inset-0 flex items-center justify-center text-2xl">🎬</div>
+          <div className="absolute inset-0 flex items-center justify-center text-rose-500"><Film className="w-8 h-8" /></div>
         </div>
         <h2 className="text-xl font-black uppercase italic tracking-widest text-primary-gradient animate-pulse">Entering the Room...</h2>
       </div>
@@ -491,7 +492,9 @@ export default function Room() {
                       <div className="flex gap-2">
                         <button onClick={handleSetVideoUrl} className="pill-button bg-primary-gradient px-12 text-white">SET VIDEO</button>
                         {roomState?.video_url && (
-                          <button onClick={handleSaveMemory} className="w-14 h-14 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-xl hover:bg-white/10 transition-all" title="Save to Memories">🎞️</button>
+                          <button onClick={handleSaveMemory} className="w-14 h-14 rounded-full bg-white/5 border border-white/10 flex items-center justify-center text-white/70 hover:text-white hover:bg-white/10 transition-all" title="Save to Memories">
+                            <BookmarkPlus className="w-5 h-5" />
+                          </button>
                         )}
                       </div>
                     </div>
@@ -526,7 +529,9 @@ export default function Room() {
                         <p className="text-[9px] font-bold text-[#33334A] uppercase tracking-widest">Everything is perfectly synced by magic</p>
                       </div>
                     ) : (
-                      <button onClick={handleForceSync} className="pill-button bg-white/5 border border-white/10 px-12 text-[10px] font-black tracking-[0.2em]">🔄 FORCE SYNC</button>
+                      <button onClick={handleForceSync} className="pill-button bg-white/5 border border-white/10 px-12 text-[10px] font-black tracking-[0.2em] flex items-center justify-center gap-2">
+                        <RefreshCw className="w-3.5 h-3.5" /> FORCE SYNC
+                      </button>
                     )}
                   </div>
                 )}

@@ -61,7 +61,7 @@ export default function Home() {
     setErrorMsg("");
     try {
       const { data: { user: authUser } } = await supabase.auth.getUser();
-      if (!authUser) throw new Error("Please log in first ❤️");
+      if (!authUser) throw new Error("Please log in first");
       
       const code = generateRoomCode();
       
@@ -90,7 +90,7 @@ export default function Home() {
   async function handleJoinRoom() {
     const code = roomCodeInput.trim().toUpperCase();
     if (!code) {
-      setErrorMsg("Please enter a room code ❤️");
+      setErrorMsg("Please enter a room code");
       return;
     }
 
@@ -98,7 +98,7 @@ export default function Home() {
     setErrorMsg("");
     try {
       const { data: { user: authUser } } = await supabase.auth.getUser();
-      if (!authUser) throw new Error("Please log in first ❤️");
+      if (!authUser) throw new Error("Please log in first");
       
       // FAST PATH: Navigate immediately and let useRoomSync handle the rest
       navigate(`/room/${code}`);
@@ -125,7 +125,7 @@ export default function Home() {
 
         <div className="relative z-30 w-full max-w-7xl px-8 flex flex-col items-center text-center">
           <h1 className="text-6xl md:text-7xl font-bold mb-8 tracking-tight text-white">Couple Watch Party, <br /><span className="text-primary-gradient">Stay connected.</span></h1>
-          <p className="max-w-2xl text-[#8B8B9A] text-[17px] mb-14 leading-[1.8]">The premier watch party for couples. Experience movies in perfect sync with your partner, no matter the distance. Feel close, share emotions, and create memories ❤️</p>
+          <p className="max-w-2xl text-[#8B8B9A] text-[17px] mb-14 leading-[1.8]">The premier watch party for couples. Experience movies in perfect sync with your partner, no matter the distance. Feel close, share emotions, and create memories.</p>
 
           <div className="w-full mb-16 flex justify-center">
             <ModeCard title="Couples mode" icon={<IconHeart />} description="Synchronized playback, video call and intimate chat for two lovers miles apart." />
@@ -151,7 +151,7 @@ export default function Home() {
         </div>
       </section>
 
-      <footer className="w-full py-12 border-t border-white/5 text-center text-[#55556A] text-[10px] font-bold uppercase tracking-[0.4em]">&copy; 2026 CoupleWatch. Built with ❤️ for lovers.</footer>
+      <footer className="w-full py-12 border-t border-white/5 text-center text-[#55556A] text-[10px] font-bold uppercase tracking-[0.4em]">&copy; 2026 CoupleWatch. Built for lovers across any distance.</footer>
     </div>
   );
 }

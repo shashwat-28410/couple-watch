@@ -78,15 +78,16 @@ export default function ProtectedLayout() {
     );
   }
 
-  // 💜 Branded loading screen
+  // Branded loading screen
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-[#0b0b15] via-[#0c0c1c] to-[#0a0a12] text-white">
-        <div className="text-center">
-          <h1 className="text-3xl font-bold text-purple-400 mb-3">
+        <div className="flex flex-col items-center gap-3 text-center">
+          <div className="w-8 h-8 border-2 border-rose-500 border-t-transparent rounded-full animate-spin mb-2" />
+          <h1 className="text-2xl font-black text-primary-gradient tracking-tight">
             CoupleWatch
           </h1>
-          <p className="text-gray-300">Checking your room… 💜</p>
+          <p className="text-[#8B8B9A] text-xs font-semibold tracking-wider">Connecting to your room...</p>
         </div>
       </div>
     );

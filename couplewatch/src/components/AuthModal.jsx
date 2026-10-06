@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { X, CheckCircle2, AlertCircle } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
 export default function AuthModal({ isOpen, onClose, initialTab = "login" }) {
@@ -8,13 +9,13 @@ export default function AuthModal({ isOpen, onClose, initialTab = "login" }) {
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [msg, setMsg] = useState("");
+  const [msg, setMsg] = useState({ type: "", text: "" });
 
   // Sync tab with initialTab when modal opens
   useEffect(() => {
     if (isOpen) {
       setTab(initialTab);
-      setMsg("");
+      setMsg({ type: "", text: "" });
     }
   }, [isOpen, initialTab]);
 
@@ -36,7 +37,7 @@ export default function AuthModal({ isOpen, onClose, initialTab = "login" }) {
   async function handleAuth(e) {
     e.preventDefault();
     setLoading(true);
-    setMsg("");
+    setMsg({ type: "", text: "" });
 
     try {
       if (tab === "signup") {
@@ -58,11 +59,11 @@ export default function AuthModal({ isOpen, onClose, initialTab = "login" }) {
           email: user.email, 
           full_name: fullName
         }]);
-        setMsg("✅ Account created! Check your email to confirm.");
+        setMsg({ type: "success", text: "Account created! Check your email to confirm." });
       } else if (tab === "login") {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        setMsg("✅ Logged in!");
+        setMsg({ type: "success", text: "Logged in successfully!" });
         setTimeout(() => {
           onClose();
           window.location.reload();
@@ -72,11 +73,11 @@ export default function AuthModal({ isOpen, onClose, initialTab = "login" }) {
           redirectTo: "https://couplewatch.in",
         });
         if (error) throw error;
-        setMsg("✅ Reset link sent to your email!");
+        setMsg({ type: "success", text: "Reset link sent to your email!" });
       } else if (tab === "reset") {
         const { error } = await supabase.auth.updateUser({ password });
         if (error) throw error;
-        setMsg("✅ Password updated! Logging you in...");
+        setMsg({ type: "success", text: "Password updated! Logging you in..." });
         if (typeof window !== "undefined" && window.history.replaceState) {
           window.history.replaceState(null, "", window.location.pathname);
         }
@@ -86,7 +87,7 @@ export default function AuthModal({ isOpen, onClose, initialTab = "login" }) {
         }, 1500);
       }
     } catch (err) {
-      setMsg("❌ " + err.message);
+      setMsg({ type: "error", text: err.message });
     } finally {
       setLoading(false);
     }
@@ -97,13 +98,15 @@ export default function AuthModal({ isOpen, onClose, initialTab = "login" }) {
       <div onClick={onClose} className="absolute inset-0 bg-[#0D0D1A]/80 backdrop-blur-md" />
 
       <div className="relative w-full max-w-md romantic-card p-10 bg-[#0D0D1A]/60 shadow-2xl border-[#C84BE0]/20">
-        <button onClick={onClose} className="absolute right-6 top-6 text-white/30 hover:text-white transition">✕</button>
+        <button onClick={onClose} className="absolute right-6 top-6 text-white/40 hover:text-white p-1 rounded-full hover:bg-white/10 transition">
+          <X className="w-5 h-5" />
+        </button>
 
         <h2 className="text-3xl font-black mb-2 tracking-tight">
-          {tab === "login" && "Welcome back ♡"}
-          {tab === "signup" && "Join the Romance ♡"}
-          {tab === "forgot" && "Reset Password ♡"}
-          {tab === "reset" && "New Password ♡"}
+          {tab === "login" && "Welcome Back"}
+          {tab === "signup" && "Join the Romance"}
+          {tab === "forgot" && "Reset Password"}
+          {tab === "reset" && "New Password"}
         </h2>
         <p className="text-[#9090A8] text-sm mb-8 leading-relaxed">
           {tab === "login" && "Log in to sync with your favorite person."}
@@ -183,14 +186,19 @@ export default function AuthModal({ isOpen, onClose, initialTab = "login" }) {
             </div>
           )}
 
-          {msg && <p className={`text-xs font-bold text-center ${msg.includes("✅") ? "text-green-400" : "text-pink-500"}`}>{msg}</p>}
+          {msg.text && (
+            <div className={`flex items-center justify-center gap-2 text-xs font-semibold p-3 rounded-xl ${msg.type === "success" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-rose-500/10 text-rose-400 border border-rose-500/20"}`}>
+              {msg.type === "success" ? <CheckCircle2 className="w-4 h-4 shrink-0" /> : <AlertCircle className="w-4 h-4 shrink-0" />}
+              <span>{msg.text}</span>
+            </div>
+          )}
 
-          <button disabled={loading} className="w-full pill-button bg-primary-gradient justify-center py-4 text-sm tracking-widest shadow-xl shadow-purple-500/20 text-white">
+          <button disabled={loading} className="w-full pill-button bg-primary-gradient justify-center py-4 text-sm tracking-widest shadow-xl shadow-purple-500/20 text-white font-bold">
             {loading ? "PROCESSING..." : 
-             tab === "login" ? "CONTINUE ♡" : 
-             tab === "signup" ? "CREATE ACCOUNT ♡" : 
-             tab === "forgot" ? "SEND RESET LINK ♡" : 
-             "UPDATE PASSWORD ♡"}
+             tab === "login" ? "CONTINUE" : 
+             tab === "signup" ? "CREATE ACCOUNT" : 
+             tab === "forgot" ? "SEND RESET LINK" : 
+             "UPDATE PASSWORD"}
           </button>
         </form>
       </div>

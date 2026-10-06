@@ -1,4 +1,5 @@
 import { useRef, useEffect, useState } from "react";
+import { Send, MessageSquare } from "lucide-react";
 import { MemoriesTab } from "./MemoriesTab";
 
 export function ChatSidebar({ 
@@ -54,8 +55,8 @@ export function ChatSidebar({
         <>
           <div className="flex-1 overflow-y-auto p-6 space-y-7 custom-scrollbar bg-black/10">
             {messages.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-center space-y-5 opacity-10">
-                <span className="text-5xl grayscale">💞</span>
+              <div className="h-full flex flex-col items-center justify-center text-center space-y-4 opacity-20 py-20">
+                <MessageSquare className="w-10 h-10 text-white" />
                 <p className="text-[10px] font-black uppercase tracking-[0.4em] italic">Start a whisper</p>
               </div>
             ) : (
@@ -110,7 +111,7 @@ export function ChatSidebar({
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.75 10.5l4.72-4.72a.75.75 0 011.28.53v11.38a.75.75 0 01-1.28.53l-4.72-4.72M4.5 18.75h9a2.25 2.25 0 002.25-2.25v-9a2.25 2.25 0 00-2.25-2.25h-9A2.25 2.25 0 002.25 7.5v9a2.25 2.25 0 002.25 2.25z" /></svg>
                 </button>
                 <button type="submit" className="w-12 h-12 rounded-full bg-[#881337] flex items-center justify-center text-white shadow-[0_10px_20px_rgba(136,19,55,0.35)] hover:scale-110 active:scale-95 transition-all" title="Send">
-                  <span className="text-xl">➜</span>
+                  <Send className="w-4 h-4 ml-0.5" />
                 </button>
               </div>
             </form>

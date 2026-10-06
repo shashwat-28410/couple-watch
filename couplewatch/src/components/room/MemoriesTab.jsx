@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { Film, Heart } from "lucide-react";
 import { supabase } from "../../lib/supabaseClient";
 
 export function MemoriesTab({ roomId }) {
@@ -58,18 +59,18 @@ export function MemoriesTab({ roomId }) {
     <div className="flex-1 flex flex-col overflow-hidden">
       <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar bg-black/10">
         {memories.length === 0 ? (
-          <div className="h-full flex flex-col items-center justify-center text-center space-y-5 opacity-10 py-20">
-            <span className="text-5xl grayscale">🎞️</span>
+          <div className="h-full flex flex-col items-center justify-center text-center space-y-5 opacity-20 py-20">
+            <Film className="w-12 h-12 text-[#8B8B9A] stroke-[1.5]" />
             <div className="space-y-2">
               <p className="text-[10px] font-black uppercase tracking-[0.4em] italic">No memories yet</p>
-              <p className="text-[8px] font-bold uppercase tracking-widest leading-relaxed">Save movies you watch together <br /> to create a shared scrapbook ❤️</p>
+              <p className="text-[8px] font-bold uppercase tracking-widest leading-relaxed">Save movies you watch together <br /> to create a shared scrapbook</p>
             </div>
           </div>
         ) : (
           memories.map((memory) => (
             <div key={memory.id} className="group relative bg-[#1A1A1F] border border-white/5 rounded-2xl p-5 transition-all hover:border-rose-500/30 hover:translate-y-[-2px] shadow-xl overflow-hidden">
-              <div className="absolute top-0 right-0 p-3 opacity-10 group-hover:opacity-100 transition-opacity">
-                 <span className="text-xs">❤️</span>
+              <div className="absolute top-0 right-0 p-3 opacity-20 group-hover:opacity-100 transition-opacity">
+                <Heart className="w-3.5 h-3.5 text-rose-500 fill-rose-500" />
               </div>
               
               <div className="flex flex-col gap-3 relative z-10">

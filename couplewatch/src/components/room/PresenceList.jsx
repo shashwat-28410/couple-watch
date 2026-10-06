@@ -1,3 +1,5 @@
+import { Crown } from "lucide-react";
+
 export function PresenceList({ members, onlineUsers, isHost, onTransfer }) {
   return (
     <div className="bg-white/[0.02] backdrop-blur-xl border border-[#881337]/30 rounded-[22px] p-5 shadow-[inset_0_0_20px_rgba(136,19,55,0.05),0_10px_40px_rgba(0,0,0,0.5)]">
@@ -32,9 +34,9 @@ export function PresenceList({ members, onlineUsers, isHost, onTransfer }) {
               </div>
             </div>
             {member.role === 'host' ? (
-              <div className="px-3 py-1.5 rounded-full bg-[#881337]/10 border border-[#881337]/30 flex items-center gap-2 shadow-[0_0_15px_rgba(136,197,55,0.1)]">
+              <div className="px-3 py-1.5 rounded-full bg-[#881337]/10 border border-[#881337]/30 flex items-center gap-1.5 shadow-[0_0_15px_rgba(136,197,55,0.1)]">
                 <span className="text-[9px] font-black uppercase text-[#BE123C] tracking-widest">Host</span>
-                <span className="text-xs">👑</span>
+                <Crown className="w-3 h-3 text-[#BE123C]" />
               </div>
             ) : (
               <div className="px-3 py-1.5 rounded-full bg-white/5 border border-white/5">
@@ -51,7 +53,7 @@ export function PresenceList({ members, onlineUsers, isHost, onTransfer }) {
           onClick={onTransfer}
           className="mt-5 w-full py-2.5 rounded-full border border-[#881337]/30 bg-[#881337]/5 text-[9px] font-black uppercase tracking-widest text-[#BE123C] hover:bg-[#881337]/15 hover:shadow-[0_0_15px_rgba(136,19,55,0.1)] transition-all flex items-center justify-center gap-2"
         >
-          👑 Transfer Host
+          <Crown className="w-3.5 h-3.5" /> Transfer Host
         </button>
       )}
     </div>
