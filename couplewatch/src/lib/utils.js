@@ -1,16 +1,5 @@
 import { supabase } from "./supabaseClient";
 
-export const parseSafeUtcTimestamp = (ts) => {
-  if (!ts) return null;
-  let s = String(ts).trim().replace(" ", "T");
-  // If timestamp lacks timezone offset ('Z' or '+HH:MM' or '-HH:MM'), treat it as UTC
-  if (!s.endsWith("Z") && !/[+-]\d{2}(:?\d{2})?$/.test(s)) {
-    s += "Z";
-  }
-  const time = new Date(s).getTime();
-  return isNaN(time) ? null : time;
-};
-
 export const ensureUserProfile = async (authUser) => {
   if (!authUser?.id) return null;
   try {

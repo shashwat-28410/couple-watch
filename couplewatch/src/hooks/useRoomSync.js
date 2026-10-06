@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "../lib/supabaseClient";
-import { ensureUserProfile, parseSafeUtcTimestamp } from "../lib/utils";
+import { ensureUserProfile } from "../lib/utils";
 
 export function useRoomSync(user, code, navigate) {
   const [room, setRoom] = useState(null);
@@ -23,65 +23,43 @@ export function useRoomSync(user, code, navigate) {
     async function initRoom() {
       if (!code || !navigate) return;
       try {
-        const { data: { user: authUser } } = await supabase.auth.getUser();
+        const { data: { session } } = await supabase.auth.getSession();
+        let authUser = session?.user;
+        if (!authUser) {
+          const { data: u } = await supabase.auth.getUser();
+          authUser = u?.user;
+        }
         if (!authUser) { navigate("/", { replace: true }); return; }
         
         // Ensure user profile exists
         const prof = await ensureUserProfile(authUser);
         if (prof) setProfile(prof);
 
-        const { data: roomData, error: roomErr } = await supabase
+        const { data: roomData } = await supabase
           .from("rooms")
           .select("*")
           .eq("room_code", code)
           .maybeSingle();
 
-        if (roomErr || !roomData) { 
-          navigate("/?error=Room%20not%20found%20or%20already%20deleted", { replace: true }); 
+        if (!roomData) { 
+          navigate("/", { replace: true }); 
           return; 
         }
+
+        setRoom(roomData);
+
+        // Clear any old room membership for this user before joining
+        await supabase.from("room_members").delete().eq("user_id", authUser.id);
+        await supabase.from("room_members").insert([{ 
+          room_id: roomData.id, 
+          user_id: authUser.id, 
+          role: roomData.created_by === authUser.id ? "host" : "member" 
+        }]);
 
         const [stateRes, membersRes] = await Promise.all([
           supabase.from("room_state").select("*").eq("room_id", roomData.id).maybeSingle(),
           supabase.from("room_members").select("id, role, user_id").eq("room_id", roomData.id)
         ]);
-
-        // Check if room has been abandoned / inactive for over 1 hour
-        const lastActiveIso = stateRes.data?.updated_at || roomData.created_at;
-        const lastActiveTime = parseSafeUtcTimestamp(lastActiveIso);
-        const createdTime = parseSafeUtcTimestamp(roomData.created_at);
-        const ONE_HOUR_MS = 60 * 60 * 1000;
-        const isRecentlyCreated = createdTime && (Date.now() - createdTime < ONE_HOUR_MS);
-
-        if (!isRecentlyCreated && roomData.created_by !== authUser.id && lastActiveTime && (Date.now() - lastActiveTime > ONE_HOUR_MS)) {
-          // Room expired: clean up all records and redirect
-          await Promise.all([
-            supabase.from("messages").delete().eq("room_id", roomData.id),
-            supabase.from("room_memories").delete().eq("room_id", roomData.id),
-            supabase.from("room_members").delete().eq("room_id", roomData.id),
-            supabase.from("room_state").delete().eq("room_id", roomData.id)
-          ]).catch(() => {});
-          await supabase.from("rooms").delete().eq("id", roomData.id).catch(() => {});
-
-          navigate("/?error=This%20room%20was%20deleted%20after%201%20hour%20of%20inactivity", { replace: true });
-          return;
-        }
-
-        // Room is valid & active: refresh active timestamp
-        await supabase
-          .from("room_state")
-          .update({ updated_at: new Date().toISOString() })
-          .eq("room_id", roomData.id)
-          .catch(() => {});
-
-        setRoom(roomData);
-
-        // Feature: Upsert member with composite onConflict to avoid 409 conflict
-        await supabase.from("room_members").upsert([{ 
-          room_id: roomData.id, 
-          user_id: authUser.id, 
-          role: roomData.created_by === authUser.id ? "host" : "member" 
-        }], { onConflict: "room_id,user_id" });
 
         if (stateRes.data) setRoomState(stateRes.data);
         
@@ -106,7 +84,7 @@ export function useRoomSync(user, code, navigate) {
         setIsInitializing(false);
       } catch (err) {
         console.error("Init Room Error:", err);
-        navigate("/?error=" + encodeURIComponent(err.message || "Failed to initialize room"), { replace: true });
+        navigate("/", { replace: true });
       }
     }
     initRoom();
