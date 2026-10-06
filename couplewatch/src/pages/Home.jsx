@@ -124,8 +124,8 @@ export default function Home() {
         </div>
 
         <div className="relative z-30 w-full max-w-7xl px-8 flex flex-col items-center text-center">
-          <h1 className="text-6xl md:text-7xl font-bold mb-8 tracking-tight text-white">Watch together, <br /><span className="text-primary-gradient">Stay connected.</span></h1>
-          <p className="max-w-2xl text-[#8B8B9A] text-[17px] mb-14 leading-[1.8]">Experience movies in perfect sync with your partner, no matter the distance. Feel close, share emotions, and create memories ❤️</p>
+          <h1 className="text-6xl md:text-7xl font-bold mb-8 tracking-tight text-white">Couple Watch Party, <br /><span className="text-primary-gradient">Stay connected.</span></h1>
+          <p className="max-w-2xl text-[#8B8B9A] text-[17px] mb-14 leading-[1.8]">The premier watch party for couples. Experience movies in perfect sync with your partner, no matter the distance. Feel close, share emotions, and create memories ❤️</p>
 
           <div className="w-full mb-16 flex justify-center">
             <ModeCard title="Couples mode" icon={<IconHeart />} description="Synchronized playback, video call and intimate chat for two lovers miles apart." />
