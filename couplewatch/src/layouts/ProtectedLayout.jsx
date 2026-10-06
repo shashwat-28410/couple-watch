@@ -1,16 +1,19 @@
 import { useEffect, useState } from "react";
-import { Outlet } from "react-router-dom";
+import { Outlet, useLocation } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import AuthModal from "../components/AuthModal";
 
 export default function ProtectedLayout() {
+  const location = useLocation();
+  const isHome = location.pathname === "/";
+
   const isRecoveryFromUrl = typeof window !== "undefined" && (
     window.location.hash.includes("type=recovery") ||
     window.location.search.includes("type=recovery")
   );
 
   const [session, setSession] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(!isHome);
   const [showAuth, setShowAuth] = useState(isRecoveryFromUrl);
   const [initialTab, setInitialTab] = useState(isRecoveryFromUrl ? "reset" : "login");
   const [isRecovering, setIsRecovering] = useState(isRecoveryFromUrl);
@@ -50,7 +53,8 @@ export default function ProtectedLayout() {
         if (isRecovering) {
           // Keep modal open for password reset
           setShowAuth(true);
-        } else if (!session?.user) {
+        } else if (!isHome && !session?.user) {
+          // Only prompt login on protected routes (like /room/:code)
           setShowAuth(true);
         } else {
           setShowAuth(false);
@@ -64,7 +68,7 @@ export default function ProtectedLayout() {
     };
 
     checkAuth();
-  }, [session, isRecovering]);
+  }, [session, isRecovering, isHome]);
 
   if (critError) {
     return (

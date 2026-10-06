@@ -1,8 +1,8 @@
-// Clean version without premium features
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import Navbar from "../components/Navbar";
+import AuthModal from "../components/AuthModal";
 import { FloatingHearts } from "../components/FloatingHearts";
 
 const IconHeart = () => (
@@ -49,6 +49,8 @@ export default function Home() {
   const [roomCodeInput, setRoomCodeInput] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const [user, setUser] = useState(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
+  const [authModalTab, setAuthModalTab] = useState("signup");
 
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
@@ -57,12 +59,16 @@ export default function Home() {
   const generateRoomCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
   async function handleStartWatching() {
-    setLoading(true);
     setErrorMsg("");
     try {
       const { data: { user: authUser } } = await supabase.auth.getUser();
-      if (!authUser) throw new Error("Please log in first");
+      if (!authUser) {
+        setAuthModalTab("signup");
+        setShowAuthModal(true);
+        return;
+      }
       
+      setLoading(true);
       const code = generateRoomCode();
       
       // STEP 1: Fast room creation
@@ -94,12 +100,16 @@ export default function Home() {
       return;
     }
 
-    setLoading(true);
     setErrorMsg("");
     try {
       const { data: { user: authUser } } = await supabase.auth.getUser();
-      if (!authUser) throw new Error("Please log in first");
+      if (!authUser) {
+        setAuthModalTab("login");
+        setShowAuthModal(true);
+        return;
+      }
       
+      setLoading(true);
       // FAST PATH: Navigate immediately and let useRoomSync handle the rest
       navigate(`/room/${code}`);
     } catch (err) {
@@ -152,6 +162,12 @@ export default function Home() {
       </section>
 
       <footer className="w-full py-12 border-t border-white/5 text-center text-[#55556A] text-[10px] font-bold uppercase tracking-[0.4em]">&copy; 2026 CoupleWatch. Built for lovers across any distance.</footer>
+
+      <AuthModal 
+        isOpen={showAuthModal} 
+        onClose={() => setShowAuthModal(false)} 
+        initialTab={authModalTab} 
+      />
     </div>
   );
 }

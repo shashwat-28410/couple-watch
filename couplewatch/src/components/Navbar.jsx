@@ -1,6 +1,5 @@
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
-import { Heart } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import AuthModal from "./AuthModal";
 
@@ -36,11 +35,10 @@ export default function Navbar({ user }) {
       <nav className="w-full h-24 flex items-center justify-between px-8 z-50">
         {/* Brand */}
         <div
-          className="flex items-center gap-2.5 text-2xl font-black text-primary-gradient tracking-tighter cursor-pointer group"
+          className="flex items-center gap-2 text-2xl font-black text-primary-gradient tracking-tighter cursor-pointer"
           onClick={() => navigate("/")}
         >
-          <Heart className="w-5 h-5 fill-rose-500 text-rose-500 group-hover:scale-110 transition-transform" />
-          <span>COUPLEWATCH</span>
+          ♡ COUPLEWATCH
         </div>
 
         <div className="flex items-center gap-6">
