@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import Navbar from "../components/Navbar";
 import AuthModal from "../components/AuthModal";
@@ -45,6 +45,7 @@ const FeatureCard = ({ title, description, icon, highlight }) => (
 
 export default function Home() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [loading, setLoading] = useState(false);
   const [roomCodeInput, setRoomCodeInput] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
@@ -55,6 +56,19 @@ export default function Home() {
   useEffect(() => {
     supabase.auth.getUser().then(({ data: { user } }) => setUser(user));
   }, []);
+
+  // Listen for error messages passed via query string (e.g. from expired room redirect)
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const err = params.get("error");
+    if (err) {
+      setErrorMsg(decodeURIComponent(err));
+      // Clean query string from browser bar without reloading
+      if (typeof window !== "undefined" && window.history.replaceState) {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    }
+  }, [location.search]);
 
   const generateRoomCode = () => Math.random().toString(36).substring(2, 8).toUpperCase();
 
@@ -81,8 +95,28 @@ export default function Home() {
       // STEP 2: Parallel background tasks
       await Promise.all([
         supabase.from("room_members").insert([{ room_id: room.id, user_id: authUser.id, role: "host" }]),
-        supabase.from("room_state").insert([{ room_id: room.id, is_playing: false, current_timestamp_seconds: 0 }])
+        supabase.from("room_state").insert([{ room_id: room.id, is_playing: false, current_timestamp_seconds: 0, updated_at: new Date().toISOString() }])
       ]);
+
+      // Background sweep: delete abandoned rooms older than 1 hour
+      const ONE_HOUR_AGO = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      supabase
+        .from("room_state")
+        .select("room_id")
+        .lt("updated_at", ONE_HOUR_AGO)
+        .then(({ data: expiredStates }) => {
+          if (expiredStates && expiredStates.length > 0) {
+            const ids = expiredStates.map(s => s.room_id);
+            Promise.all([
+              supabase.from("messages").delete().in("room_id", ids),
+              supabase.from("room_memories").delete().in("room_id", ids),
+              supabase.from("room_members").delete().in("room_id", ids),
+              supabase.from("room_state").delete().in("room_id", ids)
+            ]).then(() => {
+              supabase.from("rooms").delete().in("id", ids).catch(() => {});
+            }).catch(() => {});
+          }
+        }).catch(() => {});
 
       // FAST NAVIGATE: Go to room as soon as its state and membership are initialized
       navigate(`/room/${code}`);
@@ -110,7 +144,44 @@ export default function Home() {
       }
       
       setLoading(true);
-      // FAST PATH: Navigate immediately and let useRoomSync handle the rest
+
+      // Verify room exists & check if abandoned for > 1 hour
+      const { data: roomData } = await supabase
+        .from("rooms")
+        .select("id, created_at")
+        .eq("room_code", code)
+        .maybeSingle();
+
+      if (!roomData) {
+        setErrorMsg("Room not found or already deleted");
+        setLoading(false);
+        return;
+      }
+
+      const { data: stateData } = await supabase
+        .from("room_state")
+        .select("updated_at")
+        .eq("room_id", roomData.id)
+        .maybeSingle();
+
+      const lastActive = stateData?.updated_at || roomData.created_at;
+      const ONE_HOUR_MS = 60 * 60 * 1000;
+      if (lastActive && (Date.now() - new Date(lastActive).getTime() > ONE_HOUR_MS)) {
+        // Expired! Delete all room data from database
+        await Promise.all([
+          supabase.from("messages").delete().eq("room_id", roomData.id),
+          supabase.from("room_memories").delete().eq("room_id", roomData.id),
+          supabase.from("room_members").delete().eq("room_id", roomData.id),
+          supabase.from("room_state").delete().eq("room_id", roomData.id)
+        ]).catch(() => {});
+        await supabase.from("rooms").delete().eq("id", roomData.id).catch(() => {});
+
+        setErrorMsg("This room expired and was deleted after 1 hour of inactivity");
+        setLoading(false);
+        return;
+      }
+
+      // Navigate to active room
       navigate(`/room/${code}`);
     } catch (err) {
       setErrorMsg(err.message);

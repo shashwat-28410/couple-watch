@@ -126,10 +126,40 @@ export default function Room() {
     }
   };
 
+  // Room Heartbeat & Leave Tracker:
+  // 1. Keeps room_state.updated_at fresh every 5 minutes while users are present.
+  // 2. When the tab closes or unmounts, marks updated_at so the 1-hour expiration countdown begins.
   useEffect(() => {
-    return () => {
+    if (!room?.id) return;
+
+    const heartbeatInterval = setInterval(() => {
+      supabase
+        .from("room_state")
+        .update({ updated_at: new Date().toISOString() })
+        .eq("room_id", room.id)
+        .catch(() => {});
+    }, 5 * 60 * 1000);
+
+    const markLeave = () => {
+      if (room?.id) {
+        supabase
+          .from("room_state")
+          .update({ 
+            is_playing: false,
+            updated_at: new Date().toISOString() 
+          })
+          .eq("room_id", room.id)
+          .catch(() => {});
+      }
     };
-  }, []);
+
+    window.addEventListener("beforeunload", markLeave);
+    return () => {
+      clearInterval(heartbeatInterval);
+      window.removeEventListener("beforeunload", markLeave);
+      markLeave();
+    };
+  }, [room?.id]);
 
   // Channel setup (The glue)
   useEffect(() => {
