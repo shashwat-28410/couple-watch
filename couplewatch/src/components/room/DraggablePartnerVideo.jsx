@@ -65,8 +65,12 @@ export function DraggablePartnerVideo({ remoteStream, callStatus, partnerName })
   const videoRef = useRef(null);
   
   useEffect(() => {
-    if (videoRef.current && remoteStream) {
-      videoRef.current.srcObject = remoteStream;
+    const vid = videoRef.current;
+    if (vid && remoteStream) {
+      if (vid.srcObject !== remoteStream) {
+        vid.srcObject = remoteStream;
+      }
+      vid.play().catch(e => console.warn("PIP video play error:", e));
     }
   }, [remoteStream, callStatus]);
 
@@ -96,6 +100,7 @@ export function DraggablePartnerVideo({ remoteStream, callStatus, partnerName })
             ref={videoRef} 
             autoPlay 
             playsInline 
+            muted
             className="w-full h-full object-cover pointer-events-none"
           />
 

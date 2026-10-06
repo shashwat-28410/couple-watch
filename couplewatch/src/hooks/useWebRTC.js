@@ -16,6 +16,20 @@ const DEFAULT_ICE_SERVERS = [
 
 const CF_CACHE_KEY = "couplewatch_cf_turn_v1";
 
+const CAMERA_AUDIO_CONSTRAINTS = {
+  echoCancellation: true,
+  noiseSuppression: true,
+  autoGainControl: true,
+  sampleRate: 48000
+};
+
+const CAMERA_VIDEO_CONSTRAINTS = {
+  width: { ideal: 640, max: 1280 },
+  height: { ideal: 480, max: 720 },
+  frameRate: { ideal: 30, max: 30 },
+  facingMode: "user"
+};
+
 function getCachedIceServers() {
   try {
     const cached = sessionStorage.getItem(CF_CACHE_KEY);
@@ -41,6 +55,11 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
   const [pendingOffer, setPendingOffer] = useState(null);
   const [peerStatus] = useState("READY");
   const [iceServers, setIceServers] = useState(() => getCachedIceServers());
+  const iceServersRef = useRef(iceServers);
+
+  useEffect(() => {
+    iceServersRef.current = iceServers;
+  }, [iceServers]);
 
   useEffect(() => {
     // 1. Cloudflare Calls TURN (1,000 GB / 1 TB Free per month)
@@ -136,25 +155,98 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
     }
   }, []);
 
-  const boostAudioInSDP = useCallback((sdp) => {
+  const optimizeSDP = useCallback((sdp, isScreen = false) => {
     if (!sdp || typeof sdp !== "string") return sdp;
-    if (sdp.includes("maxaveragebitrate=128000")) return sdp;
-    const lines = sdp.split("\r\n");
+    let modified = sdp;
+    const lines = modified.split("\r\n");
     const opusLine = lines.find(l => l.includes("a=rtpmap:") && l.toLowerCase().includes("opus/48000"));
-    if (!opusLine) return sdp;
-    const match = opusLine.match(/a=rtpmap:(\d+)/);
-    if (!match) return sdp;
-    const pt = match[1];
-    return lines.map(line => {
-      if (line.startsWith(`a=fmtp:${pt}`)) {
-        const cleanLine = line
-          .replace(/;?stereo=\d+/g, "")
-          .replace(/;?sprop-stereo=\d+/g, "")
-          .replace(/;?maxaveragebitrate=\d+/g, "");
-        return `${cleanLine};stereo=1;sprop-stereo=1;maxaveragebitrate=128000;useinbandfec=1`;
+    if (opusLine) {
+      const match = opusLine.match(/a=rtpmap:(\d+)/);
+      if (match) {
+        const pt = match[1];
+        modified = lines.map(line => {
+          if (line.startsWith(`a=fmtp:${pt}`)) {
+            const cleanLine = line
+              .replace(/;?stereo=\d+/g, "")
+              .replace(/;?sprop-stereo=\d+/g, "")
+              .replace(/;?maxaveragebitrate=\d+/g, "");
+            return `${cleanLine};stereo=1;sprop-stereo=1;maxaveragebitrate=64000;useinbandfec=1`;
+          }
+          return line;
+        }).join("\r\n");
       }
-      return line;
-    }).join("\r\n");
+    }
+
+    if (!isScreen) {
+      if (!modified.includes("b=AS:") && !modified.includes("b=TIAS:")) {
+        modified = modified.replace(/(m=video[^\r\n]*\r\n)/, "$1b=AS:1000\r\n");
+      }
+    } else {
+      if (!modified.includes("b=AS:") && !modified.includes("b=TIAS:")) {
+        modified = modified.replace(/(m=video[^\r\n]*\r\n)/, "$1b=AS:2500\r\n");
+      }
+    }
+    return modified;
+  }, []);
+
+  const configureSenders = useCallback((pc, isScreen = false) => {
+    if (!pc) return;
+    try {
+      pc.getSenders().forEach((sender) => {
+        if (sender.track?.kind === "video") {
+          try {
+            const params = sender.getParameters();
+            if (!params.encodings || params.encodings.length === 0) {
+              params.encodings = [{}];
+            }
+            if (isScreen) {
+              params.encodings[0].maxBitrate = 2500000;
+              params.encodings[0].maxFramerate = 30;
+              params.encodings[0].priority = "high";
+              params.encodings[0].networkPriority = "high";
+              params.degradationPreference = "maintain-resolution";
+            } else {
+              // CAMERA VIDEO: Prioritize framerate to eliminate stutter and lagging
+              params.encodings[0].maxBitrate = 850000; // 850 kbps
+              params.encodings[0].maxFramerate = 30;
+              params.encodings[0].priority = "high";
+              params.encodings[0].networkPriority = "high";
+              params.degradationPreference = "maintain-framerate";
+            }
+            sender.setParameters(params).catch(() => {});
+          } catch {}
+        } else if (sender.track?.kind === "audio") {
+          try {
+            const params = sender.getParameters();
+            if (!params.encodings || params.encodings.length === 0) {
+              params.encodings = [{}];
+            }
+            params.encodings[0].maxBitrate = 64000;
+            params.encodings[0].priority = "high";
+            sender.setParameters(params).catch(() => {});
+          } catch {}
+        }
+      });
+    } catch {}
+  }, []);
+
+  const setHardwareCodecPreferences = useCallback((pc) => {
+    if (!pc || !window.RTCRtpReceiver?.getCapabilities) return;
+    try {
+      const transceivers = pc.getTransceivers();
+      transceivers.forEach((t) => {
+        if (t.sender.track?.kind === "video" && typeof t.setCodecPreferences === "function") {
+          const capabilities = RTCRtpReceiver.getCapabilities("video");
+          if (capabilities && Array.isArray(capabilities.codecs)) {
+            const h264 = capabilities.codecs.filter(c => c.mimeType.toLowerCase() === "video/h264");
+            const others = capabilities.codecs.filter(c => c.mimeType.toLowerCase() !== "video/h264");
+            if (h264.length > 0) {
+              t.setCodecPreferences([...h264, ...others]);
+            }
+          }
+        }
+      });
+    } catch {}
   }, []);
 
   const cleanupPC = useCallback((pc, isScreen = false) => {
@@ -210,7 +302,7 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
 
   const createPeerConnection = useCallback((isScreen = false) => {
     const pc = new RTCPeerConnection({
-      iceServers: iceServers,
+      iceServers: iceServersRef.current,
       iceTransportPolicy: "all",
       bundlePolicy: "max-bundle",
       rtcpMuxPolicy: "require"
@@ -242,6 +334,14 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
 
     pc.ontrack = (event) => {
       addLog(`${isScreen ? 'Screen' : 'Media'} track received: ${event.track.kind}`);
+      
+      // Minimize jitter buffer target delay for zero-lag real-time rendering
+      if (event.receiver && 'jitterBufferTarget' in event.receiver) {
+        try {
+          event.receiver.jitterBufferTarget = 0.04;
+        } catch {}
+      }
+
       const stream = event.streams[0] || new MediaStream([event.track]);
       if (isScreen) {
         safeSetState(setRemoteScreenStream, stream);
@@ -298,7 +398,7 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
     else pcRef.current = pc;
 
     return pc;
-  }, [user, channelRef, addLog, fullReset, safeSetState, iceServers]);
+  }, [user, channelRef, addLog, fullReset, safeSetState]);
 
   const startCall = useCallback(async (type) => {
     if (!channelRef.current || !user) {
@@ -310,8 +410,8 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
     addLog(`Starting low-latency ${type} call...`);
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        video: type === 'video' ? { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } } : false
+        audio: CAMERA_AUDIO_CONSTRAINTS,
+        video: type === 'video' ? CAMERA_VIDEO_CONSTRAINTS : false
       });
       localStreamRef.current = stream;
       safeSetState(setLocalStream, stream);
@@ -322,10 +422,15 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
       const pc = createPeerConnection(false);
       stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
+      setHardwareCodecPreferences(pc);
+      configureSenders(pc, false);
+
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
-      const boostedSdp = boostAudioInSDP(offer.sdp);
+      configureSenders(pc, false);
+
+      const boostedSdp = optimizeSDP(offer.sdp, false);
       channelRef.current.send({
         type: "broadcast",
         event: "webrtc-signal",
@@ -342,7 +447,7 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
       addLog(`Start Call Error: ${err.message}`);
       fullReset();
     }
-  }, [user, channelRef, createPeerConnection, addLog, fullReset, safeSetState, boostAudioInSDP]);
+  }, [user, channelRef, createPeerConnection, addLog, fullReset, safeSetState, optimizeSDP, setHardwareCodecPreferences, configureSenders]);
 
   const stopScreenShare = useCallback(() => {
     if (screenStreamRef.current) {
@@ -375,31 +480,15 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
       const pc = createPeerConnection(true);
       stream.getTracks().forEach(track => pc.addTrack(track, stream));
 
+      setHardwareCodecPreferences(pc);
+      configureSenders(pc, true);
+
       const offer = await pc.createOffer();
       await pc.setLocalDescription(offer);
 
-      // Set bitrate limits on negotiated sender
-      pc.getSenders().forEach(sender => {
-        if (sender.track?.kind === 'video') {
-          try {
-            const params = sender.getParameters();
-            if (!params.encodings) params.encodings = [{}];
-            params.encodings[0].maxBitrate = 2500000;
-            params.encodings[0].priority = "high";
-            params.degradationPreference = 'maintain-resolution';
-            sender.setParameters(params).catch(() => {});
-          } catch {}
-        } else if (sender.track?.kind === 'audio') {
-          try {
-            const params = sender.getParameters();
-            if (!params.encodings) params.encodings = [{}];
-            params.encodings[0].maxBitrate = 128000;
-            sender.setParameters(params).catch(() => {});
-          } catch {}
-        }
-      });
+      configureSenders(pc, true);
 
-      const boostedSdp = boostAudioInSDP(offer.sdp);
+      const boostedSdp = optimizeSDP(offer.sdp, true);
       channelRef.current.send({
         type: "broadcast",
         event: "webrtc-signal",
@@ -418,7 +507,7 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
       addLog(`Screen Share Error: ${err.message}`);
       cleanupPC(pcScreenRef.current, true);
     }
-  }, [user, channelRef, createPeerConnection, addLog, cleanupPC, safeSetState, stopScreenShare, boostAudioInSDP]);
+  }, [user, channelRef, createPeerConnection, addLog, cleanupPC, safeSetState, stopScreenShare, optimizeSDP, setHardwareCodecPreferences, configureSenders]);
 
   const joinIncomingCall = useCallback(async () => {
     if (!pendingOffer || !channelRef.current || !user) return;
@@ -430,7 +519,10 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
       if (!pc) pc = createPeerConnection(isScreen);
       
       if (!isScreen) {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: incomingType === 'video' });
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: CAMERA_AUDIO_CONSTRAINTS,
+          video: incomingType === 'video' ? CAMERA_VIDEO_CONSTRAINTS : false
+        });
         localStreamRef.current = stream;
         safeSetState(setLocalStream, stream);
         safeSetState(setCallType, incomingType);
@@ -439,14 +531,26 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
         stream.getTracks().forEach(track => pc.addTrack(track, stream));
       }
 
+      setHardwareCodecPreferences(pc);
+      configureSenders(pc, isScreen);
+
       const rawSdp = typeof sdp === 'string' ? sdp : sdp?.sdp;
       if (!rawSdp) throw new Error("Empty SDP in offer");
       await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: rawSdp }));
+
+      // Drain queued candidates immediately after remote description is ready
+      const queue = isScreen ? iceScreenQueue : iceQueue;
+      while (queue.current.length > 0) {
+        const cand = queue.current.shift();
+        if (cand && cand.candidate) try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch { /* ignore */ }
+      }
       
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
 
-      const boostedAnswer = boostAudioInSDP(answer.sdp);
+      configureSenders(pc, isScreen);
+
+      const boostedAnswer = optimizeSDP(answer.sdp, isScreen);
       channelRef.current.send({
         type: "broadcast",
         event: "webrtc-signal",
@@ -457,17 +561,11 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
           isScreen
         }
       });
-
-      const queue = isScreen ? iceScreenQueue : iceQueue;
-      while (queue.current.length > 0) {
-        const cand = queue.current.shift();
-        if (cand && cand.candidate) try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch { /* ignore */ }
-      }
     } catch (err) {
       addLog(`Join Call Error: ${err.message}`);
       if (!isScreen) fullReset();
     }
-  }, [pendingOffer, user, channelRef, createPeerConnection, addLog, fullReset, safeSetState, boostAudioInSDP]);
+  }, [pendingOffer, user, channelRef, createPeerConnection, addLog, fullReset, safeSetState, optimizeSDP, setHardwareCodecPreferences, configureSenders]);
 
   const handleWebRTCSignal = useCallback(async (payload) => {
     const { type, sdp, candidate, senderId, callType: incomingType, isScreen } = payload;
@@ -478,7 +576,6 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
 
     try {
       if (type === "offer") {
-        queue.current = [];
         const rawSdp = typeof sdp === 'string' ? sdp : sdp?.sdp;
         if (!rawSdp) return;
         if (isScreen) {
@@ -496,6 +593,7 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
           if (!isScreen) {
             safeSetState(setCallStatus, "CONNECTED");
           }
+          configureSenders(pc, isScreen);
           while (queue.current.length > 0) {
             const cand = queue.current.shift();
             if (cand && cand.candidate) try { await pc.addIceCandidate(new RTCIceCandidate(cand)); } catch { /* ignore */ }
@@ -521,7 +619,7 @@ export function useWebRTC(user, channelRef, addLog = console.log) {
     } catch (err) {
       addLog(`Signal Error [${type}]: ${err.message}`);
     }
-  }, [user, fullReset, cleanupPC, addLog, safeSetState]);
+  }, [user, fullReset, cleanupPC, addLog, safeSetState, configureSenders]);
 
   const endCall = useCallback((notify = true) => {
     if (notify && channelRef.current && user) {
