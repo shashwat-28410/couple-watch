@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "../lib/supabaseClient";
+import { ensureUserProfile, parseSafeUtcTimestamp } from "../lib/utils";
 
 export function useRoomSync(user, code, navigate) {
   const [room, setRoom] = useState(null);
@@ -25,11 +26,17 @@ export function useRoomSync(user, code, navigate) {
         const { data: { user: authUser } } = await supabase.auth.getUser();
         if (!authUser) { navigate("/", { replace: true }); return; }
         
-        const { data: prof } = await supabase.from("profiles").select("full_name").eq("id", authUser.id).single();
+        // Ensure user profile exists
+        const prof = await ensureUserProfile(authUser);
         if (prof) setProfile(prof);
 
-        const { data: roomData } = await supabase.from("rooms").select("*").eq("room_code", code).maybeSingle();
-        if (!roomData) { 
+        const { data: roomData, error: roomErr } = await supabase
+          .from("rooms")
+          .select("*")
+          .eq("room_code", code)
+          .maybeSingle();
+
+        if (roomErr || !roomData) { 
           navigate("/?error=Room%20not%20found%20or%20already%20deleted", { replace: true }); 
           return; 
         }
@@ -40,9 +47,13 @@ export function useRoomSync(user, code, navigate) {
         ]);
 
         // Check if room has been abandoned / inactive for over 1 hour
-        const lastActiveTime = stateRes.data?.updated_at || roomData.created_at;
+        const lastActiveIso = stateRes.data?.updated_at || roomData.created_at;
+        const lastActiveTime = parseSafeUtcTimestamp(lastActiveIso);
+        const createdTime = parseSafeUtcTimestamp(roomData.created_at);
         const ONE_HOUR_MS = 60 * 60 * 1000;
-        if (lastActiveTime && (Date.now() - new Date(lastActiveTime).getTime() > ONE_HOUR_MS)) {
+        const isRecentlyCreated = createdTime && (Date.now() - createdTime < ONE_HOUR_MS);
+
+        if (!isRecentlyCreated && roomData.created_by !== authUser.id && lastActiveTime && (Date.now() - lastActiveTime > ONE_HOUR_MS)) {
           // Room expired: clean up all records and redirect
           await Promise.all([
             supabase.from("messages").delete().eq("room_id", roomData.id),
@@ -65,12 +76,12 @@ export function useRoomSync(user, code, navigate) {
 
         setRoom(roomData);
 
-        // Feature: Upsert member to avoid 409 conflict
+        // Feature: Upsert member with composite onConflict to avoid 409 conflict
         await supabase.from("room_members").upsert([{ 
           room_id: roomData.id, 
           user_id: authUser.id, 
           role: roomData.created_by === authUser.id ? "host" : "member" 
-        }]);
+        }], { onConflict: "room_id,user_id" });
 
         if (stateRes.data) setRoomState(stateRes.data);
         
@@ -95,7 +106,7 @@ export function useRoomSync(user, code, navigate) {
         setIsInitializing(false);
       } catch (err) {
         console.error("Init Room Error:", err);
-        navigate("/", { replace: true });
+        navigate("/?error=" + encodeURIComponent(err.message || "Failed to initialize room"), { replace: true });
       }
     }
     initRoom();

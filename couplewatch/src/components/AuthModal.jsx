@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { X, CheckCircle2, AlertCircle } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
+import { ensureUserProfile } from "../lib/utils";
 
 export default function AuthModal({ isOpen, onClose, initialTab = "login" }) {
   const [tab, setTab] = useState(initialTab); // login | signup | forgot | reset
@@ -54,15 +55,18 @@ export default function AuthModal({ isOpen, onClose, initialTab = "login" }) {
         const user = data?.user;
         if (!user) throw new Error("User not returned");
 
-        await supabase.from("profiles").insert([{ 
+        await supabase.from("profiles").upsert([{ 
           id: user.id, 
           email: user.email, 
           full_name: fullName
-        }]);
+        }], { onConflict: "id" });
         setMsg({ type: "success", text: "Account created! Check your email to confirm." });
       } else if (tab === "login") {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
+        const { data, error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
+        if (data?.user) {
+          await ensureUserProfile(data.user);
+        }
         setMsg({ type: "success", text: "Logged in successfully!" });
         setTimeout(() => {
           onClose();

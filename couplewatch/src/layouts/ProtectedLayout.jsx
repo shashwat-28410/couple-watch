@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { supabase } from "../lib/supabaseClient";
 import AuthModal from "../components/AuthModal";
+import { ensureUserProfile } from "../lib/utils";
 
 export default function ProtectedLayout() {
   const location = useLocation();
@@ -25,20 +26,7 @@ export default function ProtectedLayout() {
       const syncProfile = async (u) => {
         if (!u) return;
         try {
-          const name = u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split("@")[0] || "User";
-          const { data: existing } = await supabase
-            .from("profiles")
-            .select("id")
-            .eq("id", u.id)
-            .maybeSingle();
-
-          if (!existing) {
-            await supabase.from("profiles").insert([{
-              id: u.id,
-              email: u.email,
-              full_name: name
-            }]);
-          }
+          await ensureUserProfile(u);
         } catch (e) {
           console.warn("Profile sync warning:", e);
         }

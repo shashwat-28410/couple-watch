@@ -4,6 +4,7 @@ import { supabase } from "../lib/supabaseClient";
 import Navbar from "../components/Navbar";
 import AuthModal from "../components/AuthModal";
 import { FloatingHearts } from "../components/FloatingHearts";
+import { ensureUserProfile, parseSafeUtcTimestamp } from "../lib/utils";
 
 const IconHeart = () => (
   <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z"/></svg>
@@ -83,45 +84,73 @@ export default function Home() {
       }
       
       setLoading(true);
+
+      // STEP 0: Guarantee user profile exists (prevents foreign key errors on room_members)
+      await ensureUserProfile(authUser);
+
       const code = generateRoomCode();
       
-      // STEP 1: Fast room creation
+      // STEP 1: Create room
       const { data: room, error } = await supabase.from("rooms")
         .insert([{ room_code: code, created_by: authUser.id }])
         .select().single();
       
-      if (error || !room) throw new Error("Failed to create room");
+      if (error || !room) {
+        throw new Error(error?.message || "Failed to create room");
+      }
 
-      // STEP 2: Parallel background tasks
-      await Promise.all([
-        supabase.from("room_members").insert([{ room_id: room.id, user_id: authUser.id, role: "host" }]),
-        supabase.from("room_state").insert([{ room_id: room.id, is_playing: false, current_timestamp_seconds: 0, updated_at: new Date().toISOString() }])
+      // STEP 2: Initialize membership and initial room state in parallel
+      const [memRes, stateRes] = await Promise.all([
+        supabase.from("room_members").upsert([{ 
+          room_id: room.id, 
+          user_id: authUser.id, 
+          role: "host" 
+        }], { onConflict: "room_id,user_id" }),
+        supabase.from("room_state").insert([{ 
+          room_id: room.id, 
+          is_playing: false, 
+          current_timestamp_seconds: 0, 
+          updated_at: new Date().toISOString() 
+        }])
       ]);
 
-      // Background sweep: delete abandoned rooms older than 1 hour
+      if (memRes.error) console.warn("room_members warning:", memRes.error.message);
+      if (stateRes.error) console.warn("room_state warning:", stateRes.error.message);
+
+      // Background sweep: delete abandoned rooms older than 1 hour (with safe UTC checks)
       const ONE_HOUR_AGO = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+      const ONE_HOUR_MS = 60 * 60 * 1000;
       supabase
         .from("room_state")
-        .select("room_id")
+        .select("room_id, updated_at")
         .lt("updated_at", ONE_HOUR_AGO)
         .then(({ data: expiredStates }) => {
           if (expiredStates && expiredStates.length > 0) {
-            const ids = expiredStates.map(s => s.room_id);
-            Promise.all([
-              supabase.from("messages").delete().in("room_id", ids),
-              supabase.from("room_memories").delete().in("room_id", ids),
-              supabase.from("room_members").delete().in("room_id", ids),
-              supabase.from("room_state").delete().in("room_id", ids)
-            ]).then(() => {
-              supabase.from("rooms").delete().in("id", ids).catch(() => {});
-            }).catch(() => {});
+            const validExpiredIds = expiredStates
+              .filter(s => {
+                if (s.room_id === room.id) return false;
+                const ts = parseSafeUtcTimestamp(s.updated_at);
+                return ts && (Date.now() - ts > ONE_HOUR_MS);
+              })
+              .map(s => s.room_id);
+
+            if (validExpiredIds.length > 0) {
+              Promise.all([
+                supabase.from("messages").delete().in("room_id", validExpiredIds),
+                supabase.from("room_memories").delete().in("room_id", validExpiredIds),
+                supabase.from("room_members").delete().in("room_id", validExpiredIds),
+                supabase.from("room_state").delete().in("room_id", validExpiredIds)
+              ]).then(() => {
+                supabase.from("rooms").delete().in("id", validExpiredIds).catch(() => {});
+              }).catch(() => {});
+            }
           }
         }).catch(() => {});
 
       // FAST NAVIGATE: Go to room as soon as its state and membership are initialized
       navigate(`/room/${code}`);
     } catch (err) {
-      setErrorMsg(err.message);
+      setErrorMsg(err.message || "Failed to create room");
     } finally {
       setLoading(false);
     }
@@ -145,14 +174,14 @@ export default function Home() {
       
       setLoading(true);
 
-      // Verify room exists & check if abandoned for > 1 hour
-      const { data: roomData } = await supabase
+      // Verify room exists
+      const { data: roomData, error: roomErr } = await supabase
         .from("rooms")
-        .select("id, created_at")
+        .select("id, created_at, created_by")
         .eq("room_code", code)
         .maybeSingle();
 
-      if (!roomData) {
+      if (roomErr || !roomData) {
         setErrorMsg("Room not found or already deleted");
         setLoading(false);
         return;
@@ -164,9 +193,13 @@ export default function Home() {
         .eq("room_id", roomData.id)
         .maybeSingle();
 
-      const lastActive = stateData?.updated_at || roomData.created_at;
+      const lastActiveIso = stateData?.updated_at || roomData.created_at;
+      const lastActiveTime = parseSafeUtcTimestamp(lastActiveIso);
+      const createdTime = parseSafeUtcTimestamp(roomData.created_at);
       const ONE_HOUR_MS = 60 * 60 * 1000;
-      if (lastActive && (Date.now() - new Date(lastActive).getTime() > ONE_HOUR_MS)) {
+      const isRecentlyCreated = createdTime && (Date.now() - createdTime < ONE_HOUR_MS);
+
+      if (!isRecentlyCreated && roomData.created_by !== authUser.id && lastActiveTime && (Date.now() - lastActiveTime > ONE_HOUR_MS)) {
         // Expired! Delete all room data from database
         await Promise.all([
           supabase.from("messages").delete().eq("room_id", roomData.id),
@@ -181,10 +214,13 @@ export default function Home() {
         return;
       }
 
+      // Ensure joining user has a profile record
+      await ensureUserProfile(authUser);
+
       // Navigate to active room
       navigate(`/room/${code}`);
     } catch (err) {
-      setErrorMsg(err.message);
+      setErrorMsg(err.message || "Failed to join room");
     } finally {
       setLoading(false);
     }
@@ -213,7 +249,9 @@ export default function Home() {
           </div>
 
           <div className="flex flex-col md:flex-row gap-6 mb-20 items-center justify-center w-full">
-            <button onClick={handleStartWatching} disabled={loading} className="pill-button bg-primary-gradient px-12 h-[56px] text-white disabled:opacity-50">Start watching now</button>
+            <button onClick={handleStartWatching} disabled={loading} className="pill-button bg-primary-gradient px-12 h-[56px] text-white disabled:opacity-50">
+              {loading ? "Creating room..." : "Start watching now"}
+            </button>
             <div className="flex gap-3 h-[56px]">
               <input className="romantic-input w-52 h-full text-center tracking-widest placeholder:text-[#55556A]" placeholder="ROOM CODE" value={roomCodeInput} onChange={e => setRoomCodeInput(e.target.value.toUpperCase())} />
               <button onClick={handleJoinRoom} disabled={loading} className="px-12 py-3 rounded-full border border-white/10 font-bold hover:bg-white/5 transition h-full text-white/80 disabled:opacity-50">Join</button>

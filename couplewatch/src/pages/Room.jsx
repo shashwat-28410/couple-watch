@@ -179,7 +179,7 @@ export default function Room() {
         .on("postgres_changes", { event: "UPDATE", schema: "public", table: "room_state", filter: `room_id=eq.${room.id}` }, (p) => roomSync.setRoomState(prev => ({ ...prev, ...p.new })))
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages", filter: `room_id=eq.${room.id}` }, async (payload) => {
           chat.setMessages(current => current.some(m => m.id === payload.new.id) ? current : [...current, { ...payload.new, profiles: { full_name: "Partner" } }]);
-          supabase.from("profiles").select("full_name").eq("id", payload.new.user_id).single().then(({ data }) => {
+          supabase.from("profiles").select("full_name").eq("id", payload.new.user_id).maybeSingle().then(({ data }) => {
             if (data) chat.setMessages(c => c.map(m => m.id === payload.new.id ? { ...m, profiles: data } : m));
           });
         })
@@ -258,7 +258,7 @@ export default function Room() {
         .subscribe(async (status) => {
           roomSync.setConnectionStatus(status);
           if (status === "SUBSCRIBED") {
-            const { data: prof } = await supabase.from("profiles").select("full_name").eq("id", user.id).single();
+            const { data: prof } = await supabase.from("profiles").select("full_name").eq("id", user.id).maybeSingle();
             await subChannel.track({ 
               online_at: new Date().toISOString(), 
               is_typing: false, 

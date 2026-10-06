@@ -1,3 +1,58 @@
+import { supabase } from "./supabaseClient";
+
+export const parseSafeUtcTimestamp = (ts) => {
+  if (!ts) return null;
+  let s = String(ts).trim().replace(" ", "T");
+  // If timestamp lacks timezone offset ('Z' or '+HH:MM' or '-HH:MM'), treat it as UTC
+  if (!s.endsWith("Z") && !/[+-]\d{2}(:?\d{2})?$/.test(s)) {
+    s += "Z";
+  }
+  const time = new Date(s).getTime();
+  return isNaN(time) ? null : time;
+};
+
+export const ensureUserProfile = async (authUser) => {
+  if (!authUser?.id) return null;
+  try {
+    const { data: existing } = await supabase
+      .from("profiles")
+      .select("id, full_name, email")
+      .eq("id", authUser.id)
+      .maybeSingle();
+
+    if (existing) return existing;
+
+    const name =
+      authUser.user_metadata?.full_name ||
+      authUser.user_metadata?.name ||
+      authUser.email?.split("@")[0] ||
+      "User";
+
+    const { data: inserted, error } = await supabase
+      .from("profiles")
+      .upsert(
+        [
+          {
+            id: authUser.id,
+            email: authUser.email,
+            full_name: name,
+          },
+        ],
+        { onConflict: "id" }
+      )
+      .select()
+      .maybeSingle();
+
+    if (error) {
+      console.warn("Could not upsert profile:", error.message);
+    }
+    return inserted || { id: authUser.id, full_name: name, email: authUser.email };
+  } catch (err) {
+    console.warn("ensureUserProfile error:", err);
+    return null;
+  }
+};
+
 export const formatVideoUrl = (url) => {
   if (!url) return url;
   let formatted = url.trim();
