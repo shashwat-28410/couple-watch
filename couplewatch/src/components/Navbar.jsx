@@ -62,13 +62,13 @@ export default function Navbar({ user }) {
             <>
               <button
                 onClick={() => handleAuth("login")}
-                className="text-white font-bold hover:text-purple-400 transition text-sm"
+                className="text-white font-bold hover:text-rose-400 transition text-sm"
               >
                 Login
               </button>
               <button
                 onClick={() => handleAuth("signup")}
-                className="pill-button bg-primary-gradient text-sm text-white px-6 py-2 shadow-lg shadow-purple-500/20"
+                className="pill-button bg-primary-gradient text-sm text-white px-6 py-2 shadow-lg shadow-rose-600/20"
               >
                 Sign Up
               </button>

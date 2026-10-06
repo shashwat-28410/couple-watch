@@ -22,9 +22,34 @@ export default function ProtectedLayout() {
   // 🔐 Load session + listen for auth changes
   useEffect(() => {
     try {
+      const syncProfile = async (u) => {
+        if (!u) return;
+        try {
+          const name = u.user_metadata?.full_name || u.user_metadata?.name || u.email?.split("@")[0] || "User";
+          const { data: existing } = await supabase
+            .from("profiles")
+            .select("id")
+            .eq("id", u.id)
+            .maybeSingle();
+
+          if (!existing) {
+            await supabase.from("profiles").insert([{
+              id: u.id,
+              email: u.email,
+              full_name: name
+            }]);
+          }
+        } catch (e) {
+          console.warn("Profile sync warning:", e);
+        }
+      };
+
       const init = async () => {
         const { data } = await supabase.auth.getSession();
-        setSession(data.session || null);
+        setSession(data?.session || null);
+        if (data?.session?.user) {
+          syncProfile(data.session.user);
+        }
       };
 
       init();
@@ -32,6 +57,9 @@ export default function ProtectedLayout() {
       const { data: listener } = supabase.auth.onAuthStateChange(
         (event, newSession) => {
           setSession(newSession);
+          if (newSession?.user) {
+            syncProfile(newSession.user);
+          }
           if (event === "PASSWORD_RECOVERY") {
             setIsRecovering(true);
             setInitialTab("reset");
